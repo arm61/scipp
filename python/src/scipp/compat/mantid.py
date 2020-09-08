@@ -119,14 +119,14 @@ def make_component_info(ws):
     component_info = ws.componentInfo()
 
     if component_info.hasSource():
-        sourcePos = component_info.sourcePosition()
+        source_pos = component_info.sourcePosition()
     else:
-        sourcePos = None
+        source_pos = None
 
     if component_info.hasSample():
-        samplePos = component_info.samplePosition()
+        sample_pos = component_info.samplePosition()
     else:
-        samplePos = None
+        sample_pos = None
 
     def as_var(pos):
         if pos is None:
@@ -135,15 +135,15 @@ def make_component_info(ws):
                            dtype=sc.dtype.vector_3_float64,
                            unit=sc.units.m)
 
-    return as_var(sourcePos), as_var(samplePos)
+    return as_var(source_pos), as_var(sample_pos)
 
 
 def make_detector_info(ws):
     det_info = ws.detectorInfo()
     # det -> spec mapping
-    nDet = det_info.size()
-    spectrum = sc.Variable(['detector'], shape=(nDet, ), dtype=sc.dtype.int32)
-    has_spectrum = sc.Variable(['detector'], values=np.full((nDet, ), False))
+    n_det = det_info.size()
+    spectrum = sc.Variable(['detector'], shape=(n_det, ), dtype=sc.dtype.int32)
+    has_spectrum = sc.Variable(['detector'], values=np.full((n_det, ), False))
     spectrum_ = spectrum.values
     has_spectrum_ = has_spectrum.values
     spec_info = ws.spectrumInfo()
@@ -267,11 +267,11 @@ def _rot_from_vectors(vec1, vec2):
 
 
 def get_detector_pos(ws):
-    nHist = ws.getNumberHistograms()
-    pos = np.zeros([nHist, 3])
+    n_hist = ws.getNumberHistograms()
+    pos = np.zeros([n_hist, 3])
 
     spec_info = ws.spectrumInfo()
-    for i in range(nHist):
+    for i in range(n_hist):
         if spec_info.hasDetectors(i):
             p = spec_info.position(i)
             pos[i, 0] = p.X()
@@ -290,7 +290,7 @@ def get_detector_properties(ws,
                             sample_pos,
                             advanced_geometry=False):
     if not advanced_geometry:
-        return (get_detector_pos(ws), None, None)
+        return get_detector_pos(ws), None, None
     spec_info = ws.spectrumInfo()
     det_info = ws.detectorInfo()
     comp_info = ws.componentInfo()
@@ -603,15 +603,15 @@ def convert_EventWorkspace_to_data_array(ws,
 
     dim, unit = validate_and_get_unit(ws.getAxis(0).getUnit().unitID())
     spec_dim, spec_coord = init_spec_axis(ws)
-    nHist = ws.getNumberHistograms()
+    n_hist = ws.getNumberHistograms()
 
     coord = sc.Variable([spec_dim],
-                        shape=[nHist],
+                        shape=[n_hist],
                         unit=unit,
                         dtype=sc.dtype.event_list_float64)
     if load_pulse_times:
         labs = sc.Variable([spec_dim],
-                           shape=[nHist],
+                           shape=[n_hist],
                            dtype=sc.dtype.event_list_int64)
 
     # Check for weighted events
@@ -620,11 +620,11 @@ def convert_EventWorkspace_to_data_array(ws,
                                 or (evtp == EventType.WEIGHTED_NOTIME))
     if contains_weighted_events:
         weights = sc.Variable([spec_dim],
-                              shape=[nHist],
+                              shape=[n_hist],
                               dtype=sc.dtype.event_list_float32,
                               variances=True)
 
-    for i in range(nHist):
+    for i in range(n_hist):
         sp = ws.getSpectrum(i)
         coord[spec_dim, i].values = sp.getTofs()
         if load_pulse_times:
@@ -645,8 +645,8 @@ def convert_EventWorkspace_to_data_array(ws,
     else:
         _, data_unit = validate_and_get_unit(ws.YUnit(), allow_empty=True)
         coords_labs_data["data"] = sc.Variable(dims=[spec_dim],
-                                               values=np.ones(nHist),
-                                               variances=np.ones(nHist),
+                                               values=np.ones(n_hist),
+                                               variances=np.ones(n_hist),
                                                unit=data_unit,
                                                dtype=sc.dtype.float32)
     array = detail.move_to_data_array(**coords_labs_data)
@@ -702,8 +702,8 @@ def convert_TableWorkspace_to_dataset(ws, error_connection=None, **ignored):
 
     # Extract information from workspace
     n_columns = ws.columnCount()
-    columnNames = ws.getColumnNames()  # list of names matching each column
-    columnTypes = ws.columnTypes()  # list of types matching each column
+    column_names = ws.getColumnNames()  # list of names matching each column
+    column_types = ws.columnTypes()  # list of types matching each column
 
     # Types available in TableWorkspace that can not be loaded into scipp
     blacklist_types = []
@@ -712,19 +712,19 @@ def convert_TableWorkspace_to_dataset(ws, error_connection=None, **ignored):
 
     dataset = sc.Dataset()
     for i in range(n_columns):
-        if columnTypes[i] in blacklist_types:
+        if column_types[i] in blacklist_types:
             continue  # skips loading data of this type
 
-        data_name = columnNames[i]
+        data_name = column_names[i]
         if error_connection is None:
             dataset[data_name] = detail.move(
                 sc.Variable(['row'], values=ws.column(i)))
         elif data_name in error_connection:
             # This data has error availble
             error_name = error_connection[data_name]
-            error_index = columnNames.index(error_name)
+            error_index = column_names.index(error_name)
 
-            if columnTypes[error_index] in blacklist_variance_types:
+            if column_types[error_index] in blacklist_variance_types:
                 # Raise error to avoid numpy square error for strings
                 raise RuntimeError("Variance can not have type string. \n" +
                                    "Data:     " + str(data_name) + "\n" +
@@ -759,7 +759,7 @@ def from_mantid(workspace, **kwargs):
             if spec_info.hasDetectors(i) and spec_info.isMonitor(i):
                 n_monitor += 1
         # If there are *only* monitors we do not move them to an attribute
-        if n_monitor > 0 and n_monitor < len(spec_info):
+        if 0 < n_monitor < len(spec_info):
             import mantid.simpleapi as mantid
             workspace, monitor_ws = mantid.ExtractMonitors(workspace)
             workspaces_to_delete.append(workspace)
@@ -840,6 +840,8 @@ def load(filename="",
     :param str instrument_filename: If specified, over-write the instrument
                                     definition in the final Dataset with the
                                     geometry contained in the file.
+    :param error_connection: Dict with data column names as keys to names of
+                             their error column
     :param str mantid_alg: Mantid algorithm to use for loading. Default is
                            `Load`.
     :param dict mantid_args: Dict of keyword arguments to forward to Mantid.
@@ -987,7 +989,7 @@ def to_mantid(data, dim, instrument_file=None):
     if len(e.shape) == 1:
         e = np.array([e])
 
-    unitX = validate_dim_and_get_mantid_string(dim)
+    unit_x = validate_dim_and_get_mantid_string(dim)
 
     nspec = y.shape[0]
     if len(x.shape) == 1:
@@ -1011,7 +1013,7 @@ def to_mantid(data, dim, instrument_file=None):
         ws.setE(i, e[i])
 
     # Set X-Axis unit
-    ws.getAxis(0).setUnit(unitX)
+    ws.getAxis(0).setUnit(unit_x)
 
     if instrument_file is not None:
         mantid.LoadInstrument(ws,

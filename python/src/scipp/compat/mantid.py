@@ -514,9 +514,9 @@ def _convert_MatrixWorkspace_info(ws,
 
 
 def convert_monitors_ws(ws, converter, **ignored):
-    dim, unit = validate_and_get_unit(ws.getAxis(0).getUnit().unitID())
+    validate_and_get_unit(ws.getAxis(0).getUnit().unitID())
     spec_dim, spec_coord = init_spec_axis(ws)
-    spec_info = spec_info = ws.spectrumInfo()
+    spec_info = ws.spectrumInfo()
     comp_info = ws.componentInfo()
     monitors = []
     indexes = (ws.getIndexFromSpectrumNumber(int(i))

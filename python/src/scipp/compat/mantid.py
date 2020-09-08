@@ -791,6 +791,9 @@ def from_mantid(workspace, **kwargs):
             converter = convert_Workspace2D_to_data_array
         elif monitor_ws.id() == 'EventWorkspace':
             converter = convert_EventWorkspace_to_data_array
+        else:
+            raise RuntimeError(
+                'Monitor workspace not of known type in from_mantid()')
 
         monitors = convert_monitors_ws(monitor_ws, converter, **kwargs)
         for name, monitor in monitors:

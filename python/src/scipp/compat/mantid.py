@@ -173,7 +173,7 @@ def make_detector_info(ws):
     }))
 
 
-def md_dimension(mantid_dim, index):
+def md_dimension(mantid_dim):
     # Look for q dimensions
     patterns = ["^q.*{0}$".format(coord) for coord in ['x', 'y', 'z']]
     q_dims = ['Q_x', 'Q_y', 'Q_z']
@@ -664,7 +664,7 @@ def convert_MDHistoWorkspace_to_data_array(md_histo, **ignored):
     for i in range(ndims):
         dim = md_histo.getDimension(i)
         frame = dim.getMDFrame()
-        sc_dim = md_dimension(dim, i)
+        sc_dim = md_dimension(dim)
         coords[sc_dim] = sc.Variable(dims=[sc_dim],
                                      values=np.linspace(
                                          dim.getMinimum(), dim.getMaximum(),
@@ -1044,24 +1044,28 @@ def _fit_workspace(ws, mantid_args):
     with run_mantid_alg('Fit',
                         InputWorkspace=ws,
                         **mantid_args,
-                        CreateOutput=True) as fit:
+                        CreateOutput=True) as fit_algorithm:
         # This is assuming that all parameters are dimensionless. If this is
         # not the case we should use a dataset with a scalar variable per
         # parameter instead. Or better, a dict of scalar variables?
-        parameters = convert_TableWorkspace_to_dataset(fit.OutputParameters)
+        parameters = convert_TableWorkspace_to_dataset(
+            fit_algorithm.OutputParameters)
         parameters = _table_to_data_array(parameters,
                                           key='Name',
                                           value='Value',
                                           stddev='Error')
-        out = convert_Workspace2D_to_data_array(fit.OutputWorkspace)
+        out = convert_Workspace2D_to_data_array(fit_algorithm.OutputWorkspace)
         data = sc.Dataset()
         data['data'] = out['empty', 0]
         data['calculated'] = out['empty', 1]
         data['diff'] = out['empty', 2]
-        parameters.coords['status'] = sc.Variable(fit.OutputStatus)
-        parameters.coords['chi^2/d.o.f.'] = sc.Variable(fit.OutputChi2overDoF)
-        parameters.coords['function'] = sc.Variable(str(fit.Function))
-        parameters.coords['cost-function'] = sc.Variable(fit.CostFunction)
+        parameters.coords['status'] = sc.Variable(fit_algorithm.OutputStatus)
+        parameters.coords['chi^2/d.o.f.'] = sc.Variable(
+            fit_algorithm.OutputChi2overDoF)
+        parameters.coords['function'] = sc.Variable(str(
+            fit_algorithm.Function))
+        parameters.coords['cost-function'] = sc.Variable(
+            fit_algorithm.CostFunction)
         return parameters, data
 
 

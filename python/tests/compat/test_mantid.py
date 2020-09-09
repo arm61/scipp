@@ -44,8 +44,8 @@ class TestMantidConversion(unittest.TestCase):
 
     def test_Workspace2D(self):
         import mantid.simpleapi as mantid
-        eventWS = mantid.CloneWorkspace(self.base_event_ws)
-        ws = mantid.Rebin(eventWS, 10000, PreserveEvents=False)
+        event_ws = mantid.CloneWorkspace(self.base_event_ws)
+        ws = mantid.Rebin(event_ws, 10000, PreserveEvents=False)
         d = mantidcompat.convert_Workspace2D_to_data_array(ws)
         self.assertEqual(
             d.coords["run_start"].value,
@@ -60,14 +60,14 @@ class TestMantidConversion(unittest.TestCase):
 
     def test_EventWorkspace(self):
         import mantid.simpleapi as mantid
-        eventWS = mantid.CloneWorkspace(self.base_event_ws)
-        ws = mantid.Rebin(eventWS, 10000)
+        event_ws = mantid.CloneWorkspace(self.base_event_ws)
+        ws = mantid.Rebin(event_ws, 10000)
 
         binned_mantid = mantidcompat.convert_Workspace2D_to_data_array(ws)
 
         target_tof = binned_mantid.coords['tof']
         d = mantidcompat.convert_EventWorkspace_to_data_array(
-            eventWS, load_pulse_times=False)
+            event_ws, load_pulse_times=False)
         d.realign({'tof': target_tof})
         binned = sc.histogram(d)
 
@@ -77,13 +77,13 @@ class TestMantidConversion(unittest.TestCase):
 
     def test_EventWorkspace_realign_events(self):
         import mantid.simpleapi as mantid
-        eventWS = mantid.CloneWorkspace(self.base_event_ws)
+        event_ws = mantid.CloneWorkspace(self.base_event_ws)
 
         realigned = mantidcompat.convert_EventWorkspace_to_data_array(
-            eventWS, realign_events=True, load_pulse_times=False)
+            event_ws, realign_events=True, load_pulse_times=False)
 
         d = mantidcompat.convert_EventWorkspace_to_data_array(
-            eventWS, realign_events=False, load_pulse_times=False)
+            event_ws, realign_events=False, load_pulse_times=False)
         d.realign({'tof': realigned.coords['tof']})
 
         # Removing sample due to missing comparison operators
@@ -117,10 +117,10 @@ class TestMantidConversion(unittest.TestCase):
 
     def test_from_mantid_CreateWorkspace(self):
         import mantid.simpleapi as mantid
-        dataX = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
-        dataY = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-        ws = mantid.CreateWorkspace(DataX=dataX,
-                                    DataY=dataY,
+        data_x = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        data_y = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        ws = mantid.CreateWorkspace(DataX=data_x,
+                                    DataY=data_y,
                                     NSpec=4,
                                     UnitX="Wavelength")
         d = mantidcompat.from_mantid(ws)
@@ -128,8 +128,8 @@ class TestMantidConversion(unittest.TestCase):
 
     def test_unit_conversion(self):
         import mantid.simpleapi as mantid
-        eventWS = mantid.CloneWorkspace(self.base_event_ws)
-        ws = mantid.Rebin(eventWS, 10000, PreserveEvents=False)
+        event_ws = mantid.CloneWorkspace(self.base_event_ws)
+        ws = mantid.Rebin(event_ws, 10000, PreserveEvents=False)
         tmp = mantidcompat.convert_Workspace2D_to_data_array(ws)
         target_tof = tmp.coords['tof']
         ws = mantid.ConvertUnits(InputWorkspace=ws,
@@ -138,7 +138,7 @@ class TestMantidConversion(unittest.TestCase):
         converted_mantid = mantidcompat.convert_Workspace2D_to_data_array(ws)
 
         da = mantidcompat.convert_EventWorkspace_to_data_array(
-            eventWS, load_pulse_times=False)
+            event_ws, load_pulse_times=False)
         da.realign({'tof': target_tof})
         da = sc.histogram(da)
         d = sc.Dataset(da)
@@ -170,8 +170,8 @@ class TestMantidConversion(unittest.TestCase):
 
     def test_Workspace2D_common_bins_masks(self):
         import mantid.simpleapi as mantid
-        eventWS = mantid.CloneWorkspace(self.base_event_ws)
-        ws = mantid.Rebin(eventWS, 10000, PreserveEvents=False)
+        event_ws = mantid.CloneWorkspace(self.base_event_ws)
+        ws = mantid.Rebin(event_ws, 10000, PreserveEvents=False)
         ws_x = ws.readX(0)
 
         # mask the first 3 bins, range is taken as [XMin, XMax)
@@ -192,8 +192,8 @@ class TestMantidConversion(unittest.TestCase):
 
     def test_Workspace2D_common_bins_not_common_masks(self):
         import mantid.simpleapi as mantid
-        eventWS = mantid.CloneWorkspace(self.base_event_ws)
-        ws = mantid.Rebin(eventWS, 10000, PreserveEvents=False)
+        event_ws = mantid.CloneWorkspace(self.base_event_ws)
+        ws = mantid.Rebin(event_ws, 10000, PreserveEvents=False)
         ws_x = ws.readX(0)
 
         # mask first 3 bins in first 3 spectra, range is taken as [XMin, XMax)
@@ -216,8 +216,8 @@ class TestMantidConversion(unittest.TestCase):
 
     def test_Workspace2D_not_common_bins_masks(self):
         import mantid.simpleapi as mantid
-        eventWS = mantid.CloneWorkspace(self.base_event_ws)
-        ws = mantid.Rebin(eventWS, 10000, PreserveEvents=False)
+        event_ws = mantid.CloneWorkspace(self.base_event_ws)
+        ws = mantid.Rebin(event_ws, 10000, PreserveEvents=False)
         ws = mantid.ConvertUnits(ws,
                                  "Wavelength",
                                  EMode="Direct",

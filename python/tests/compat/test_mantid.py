@@ -253,8 +253,9 @@ class TestMantidConversion(unittest.TestCase):
                                mantid_args={"LoadMonitors": "Separate"})
         self.assertEqual(len(mtd), 0, mtd.getObjectNames())
         attrs = [str(key) for key in ds.unaligned_coords.keys()]
-        expected_monitor_attrs = set(
-            ["monitor1", "monitor2", "monitor3", "monitor4", "monitor5"])
+        expected_monitor_attrs = {
+            "monitor1", "monitor2", "monitor3", "monitor4", "monitor5"
+        }
         assert expected_monitor_attrs.issubset(attrs)
 
         for monitor_name in expected_monitor_attrs:
@@ -270,8 +271,9 @@ class TestMantidConversion(unittest.TestCase):
                                mantid_args={"LoadMonitors": "Include"})
         self.assertEqual(len(mtd), 0, mtd.getObjectNames())
         attrs = [str(key) for key in ds.unaligned_coords.keys()]
-        expected_monitor_attrs = set(
-            ["monitor1", "monitor2", "monitor3", "monitor4", "monitor5"])
+        expected_monitor_attrs = {
+            "monitor1", "monitor2", "monitor3", "monitor4", "monitor5"
+        }
         assert expected_monitor_attrs.issubset(attrs)
         for monitor_name in expected_monitor_attrs:
             monitors = ds.coords[monitor_name].values
@@ -285,7 +287,7 @@ class TestMantidConversion(unittest.TestCase):
         ds = mantidcompat.load(filename, mantid_args={"LoadMonitors": True})
         self.assertEqual(len(mtd), 0, mtd.getObjectNames())
         attrs = [str(key) for key in ds.unaligned_coords.keys()]
-        expected_monitor_attrs = set(["monitor2", "monitor3"])
+        expected_monitor_attrs = {"monitor2", "monitor3"}
         assert expected_monitor_attrs.issubset(attrs)
         for monitor_name in expected_monitor_attrs:
             monitor = ds.coords[monitor_name].value
@@ -552,14 +554,14 @@ class TestMantidConversion(unittest.TestCase):
     def test_detector_positions(self):
         import mantid.simpleapi as mantid
         from mantid.kernel import V3D
-        eventWS = mantid.CloneWorkspace(self.base_event_ws)
-        comp_info = eventWS.componentInfo()
+        event_ws = mantid.CloneWorkspace(self.base_event_ws)
+        comp_info = event_ws.componentInfo()
         small_offset = V3D(0.01, 0.01, 0.01)
         comp_info.setPosition(comp_info.source(),
                               comp_info.samplePosition() + small_offset)
-        moved = mantidcompat.convert_Workspace2D_to_data_array(eventWS)
+        moved = mantidcompat.convert_Workspace2D_to_data_array(event_ws)
         moved_det_position = moved.coords["position"]
-        unmoved = mantidcompat.convert_Workspace2D_to_data_array(eventWS)
+        unmoved = mantidcompat.convert_Workspace2D_to_data_array(event_ws)
         unmoved_det_positions = unmoved.coords["position"]
         # Moving the sample accounted for in position calculations
         # but should not yield change to final detector positions

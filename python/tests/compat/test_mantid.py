@@ -9,6 +9,8 @@ import pytest
 import scipp as sc
 from mantid_data_helper import MantidDataHelper
 from scipp.compat import mantid as mantidcompat
+from scipp.compat._mantid_detectors import _rot_from_vectors as \
+    mantidcompat_rot_from_vectors
 
 
 def mantid_is_available():
@@ -586,9 +588,9 @@ class TestMantidConversion(unittest.TestCase):
 def test_to_rot_from_vectors():
     a = sc.Variable(value=[1, 0, 0], dtype=sc.dtype.vector_3_float64)
     b = sc.Variable(value=[0, 1, 0], dtype=sc.dtype.vector_3_float64)
-    rot = mantidcompat._rot_from_vectors(a.value, b.value)
+    rot = mantidcompat_rot_from_vectors(a.value, b.value)
     assert np.allclose((rot * a).value, b.value)
-    rot = mantidcompat._rot_from_vectors(b.value, a.value)
+    rot = mantidcompat_rot_from_vectors(b.value, a.value)
     assert np.allclose((rot * b).value, a.value)
 
 

@@ -14,6 +14,7 @@ from .. import detail
 from .._utils import is_data_array
 from .._scipp import core as sc
 from .._scipp.core import contains_events
+from ._mantid_detectors import get_detector_properties, make_detector_info
 
 
 @contextmanager
@@ -45,15 +46,11 @@ def run_mantid_alg(alg, *args, **kwargs):
                 mantid.DeleteWorkspace(name)
 
 
-def get_pos(pos):
+def _get_pos(pos):
     return [pos.X(), pos.Y(), pos.Z()]
 
 
-def make_run(ws):
-    return sc.Variable(value=deepcopy(ws.run()))
-
-
-additional_unit_mapping = {
+_additional_unit_mapping = {
     "Kelvin": sc.units.K,
     "microsecond": sc.units.us,
     "nanosecond": sc.units.ns,
@@ -64,11 +61,11 @@ additional_unit_mapping = {
 }
 
 
-def make_variables_from_run_logs(ws):
+def _make_variables_from_run_logs(ws):
     lookup_units = dict(
         zip([str(unit) for unit in sc.units.supported_units()],
             sc.units.supported_units()))
-    lookup_units.update(additional_unit_mapping)
+    lookup_units.update(_additional_unit_mapping)
     for property_name in ws.run().keys():
         units_string = ws.run()[property_name].units
         unit = lookup_units.get(units_string, None)
@@ -131,46 +128,11 @@ def make_component_info(ws):
     def as_var(pos):
         if pos is None:
             return pos
-        return sc.Variable(value=np.array(get_pos(pos)),
+        return sc.Variable(value=np.array(_get_pos(pos)),
                            dtype=sc.dtype.vector_3_float64,
                            unit=sc.units.m)
 
     return as_var(source_pos), as_var(sample_pos)
-
-
-def make_detector_info(ws):
-    det_info = ws.detectorInfo()
-    # det -> spec mapping
-    n_det = det_info.size()
-    spectrum = sc.Variable(['detector'], shape=(n_det, ), dtype=sc.dtype.int32)
-    has_spectrum = sc.Variable(['detector'], values=np.full((n_det, ), False))
-    spectrum_ = spectrum.values
-    has_spectrum_ = has_spectrum.values
-    spec_info = ws.spectrumInfo()
-    for i, spec in enumerate(spec_info):
-        spec_def = spec.spectrumDefinition
-        for j in range(len(spec_def)):
-            det, time = spec_def[j]
-            if time != 0:
-                raise RuntimeError(
-                    "Conversion of Mantid Workspace with scanning instrument "
-                    "not supported yet.")
-            spectrum_[det] = i
-            has_spectrum_[det] = True
-    detector = sc.Variable(['detector'], values=det_info.detectorIDs())
-
-    # Remove any information about detectors without data (a spectrum). This
-    # mostly just gets in the way and including it in the default converter
-    # is probably not required.
-    spectrum = sc.filter(spectrum, has_spectrum)
-    detector = sc.filter(detector, has_spectrum)
-
-    # May want to include more information here, such as detector positions,
-    # but for now this is not necessary.
-    return sc.Variable(value=sc.Dataset(coords={
-        'detector': detector,
-        'spectrum': spectrum
-    }))
 
 
 def md_dimension(mantid_dim):
@@ -246,178 +208,6 @@ def validate_and_get_unit(unit, allow_empty=False):
         return known_units[unit]
 
 
-def _to_spherical(pos, output):
-    output["r"] = sc.sqrt(sc.dot(pos, pos))
-    output["t"] = sc.acos(sc.geometry.z(pos) / output["r"].data)
-    output["p"] = output["t"].data.copy()
-    sc.atan2(sc.geometry.y(pos), sc.geometry.x(pos), output["p"].data)
-
-
-def _rot_from_vectors(vec1, vec2):
-    a = sc.Variable(value=vec1 / np.linalg.norm(vec1),
-                    dtype=sc.dtype.vector_3_float64)
-    b = sc.Variable(value=vec2 / np.linalg.norm(vec2),
-                    dtype=sc.dtype.vector_3_float64)
-    c = sc.Variable(value=np.cross(a.value, b.value),
-                    dtype=sc.dtype.vector_3_float64)
-    angle = sc.acos(sc.dot(a, b)).value
-    q = sc.rotation_matrix_from_quaternion_coeffs(
-        list(c.value * np.sin(angle / 2)) + [np.cos(angle / 2)])
-    return sc.Variable(value=q)
-
-
-def get_detector_pos(ws):
-    n_hist = ws.getNumberHistograms()
-    pos = np.zeros([n_hist, 3])
-
-    spec_info = ws.spectrumInfo()
-    for i in range(n_hist):
-        if spec_info.hasDetectors(i):
-            p = spec_info.position(i)
-            pos[i, 0] = p.X()
-            pos[i, 1] = p.Y()
-            pos[i, 2] = p.Z()
-        else:
-            pos[i, :] = [np.nan, np.nan, np.nan]
-    return sc.Variable(['spectrum'],
-                       values=pos,
-                       unit=sc.units.m,
-                       dtype=sc.dtype.vector_3_float64)
-
-
-def get_detector_properties(ws,
-                            source_pos,
-                            sample_pos,
-                            advanced_geometry=False):
-    if not advanced_geometry:
-        return get_detector_pos(ws), None, None
-    spec_info = ws.spectrumInfo()
-    det_info = ws.detectorInfo()
-    comp_info = ws.componentInfo()
-    nspec = len(spec_info)
-    det_rot = np.zeros([nspec, 3, 3])
-    det_bbox = np.zeros([nspec, 3])
-
-    if sample_pos is not None and source_pos is not None:
-        total_detectors = spec_info.detectorCount()
-        act_beam = (sample_pos - source_pos).values
-        rot = _rot_from_vectors(act_beam, [0, 0, 1])
-        inv_rot = _rot_from_vectors([0, 0, 1], act_beam)
-
-        pos_d = sc.Dataset()
-        # Create empty to hold position info for all spectra detectors
-        pos_d["x"] = sc.Variable(["detector"],
-                                 shape=[total_detectors],
-                                 unit=sc.units.m)
-        pos_d["y"] = pos_d["x"]
-        pos_d["z"] = pos_d["x"]
-        pos_d.coords["spectrum"] = sc.Variable(
-            ["detector"], values=np.empty(total_detectors))
-        spectrum_values = pos_d.coords["spectrum"].values
-
-        x_values = pos_d["x"].values
-        y_values = pos_d["y"].values
-        z_values = pos_d["z"].values
-
-        idx = 0
-        for i, spec in enumerate(spec_info):
-            if spec.hasDetectors:
-                definition = spec_info.getSpectrumDefinition(i)
-                n_dets = len(definition)
-                quats = []
-                bboxes = []
-                for j in range(n_dets):
-                    det_idx = definition[j][0]
-                    p = det_info.position(det_idx)
-                    r = det_info.rotation(det_idx)
-                    s = comp_info.shape(det_idx)
-                    spectrum_values[idx] = i
-                    x_values[idx] = p.X()
-                    y_values[idx] = p.Y()
-                    z_values[idx] = p.Z()
-                    idx += 1
-                    quats.append(
-                        np.array([r.imagI(),
-                                  r.imagJ(),
-                                  r.imagK(),
-                                  r.real()]))
-                    bboxes.append(s.getBoundingBox().width())
-                det_rot[i, :] = sc.rotation_matrix_from_quaternion_coeffs(
-                    np.mean(quats, axis=0))
-                det_bbox[i, :] = np.sum(bboxes, axis=0)
-
-        rot_pos = rot * sc.geometry.position(pos_d["x"].data, pos_d["y"].data,
-                                             pos_d["z"].data)
-
-        _to_spherical(rot_pos, pos_d)
-
-        averaged = sc.groupby(pos_d,
-                              "spectrum",
-                              bins=sc.Variable(["spectrum"],
-                                               values=np.arange(
-                                                   -0.5,
-                                                   len(spec_info) + 0.5,
-                                                   1.0))).mean("detector")
-
-        averaged["x"] = averaged["r"].data * sc.sin(
-            averaged["t"].data) * sc.cos(averaged["p"].data)
-        averaged["y"] = averaged["r"].data * sc.sin(
-            averaged["t"].data) * sc.sin(averaged["p"].data)
-        averaged["z"] = averaged["r"].data * sc.cos(averaged["t"].data)
-
-        pos = sc.geometry.position(averaged["x"].data, averaged["y"].data,
-                                   averaged["z"].data)
-        return (inv_rot * pos,
-                sc.Variable(['spectrum'],
-                            values=det_rot,
-                            dtype=sc.dtype.matrix_3_float64),
-                sc.Variable(['spectrum'],
-                            values=det_bbox,
-                            unit=sc.units.m,
-                            dtype=sc.dtype.vector_3_float64))
-    else:
-        pos = np.zeros([nspec, 3])
-
-        for i, spec in enumerate(spec_info):
-            if spec.hasDetectors:
-                definition = spec_info.getSpectrumDefinition(i)
-                n_dets = len(definition)
-                vec3s = []
-                quats = []
-                bboxes = []
-                for j in range(n_dets):
-                    det_idx = definition[j][0]
-                    p = det_info.position(det_idx)
-                    r = det_info.rotation(det_idx)
-                    s = comp_info.shape(det_idx)
-                    vec3s.append([p.X(), p.Y(), p.Z()])
-                    quats.append(
-                        np.array([r.imagI(),
-                                  r.imagJ(),
-                                  r.imagK(),
-                                  r.real()]))
-                    bboxes.append(s.getBoundingBox().width())
-                pos[i, :] = np.mean(vec3s, axis=0)
-                det_rot[i, :] = sc.rotation_matrix_from_quaterion_cooffs(
-                    np.mean(quats, axis=0))
-                det_bbox[i, :] = np.sum(bboxes, axis=0)
-            else:
-                pos[i, :] = [np.nan, np.nan, np.nan]
-                det_rot[i, :] = [np.nan, np.nan, np.nan, np.nan]
-                det_bbox[i, :] = [np.nan, np.nan, np.nan]
-        return (sc.Variable(['spectrum'],
-                            values=pos,
-                            unit=sc.units.m,
-                            dtype=sc.dtype.vector_3_float64),
-                sc.Variable(['spectrum'],
-                            values=det_rot,
-                            dtype=sc.dtype.matrix_3_float64),
-                sc.Variable(['spectrum'],
-                            values=det_bbox,
-                            unit=sc.units.m,
-                            dtype=sc.dtype.vector_3_float64))
-
-
 def _get_dtype_from_values(values, coerce_floats_to_ints):
     if coerce_floats_to_ints and np.all(np.mod(values, 1.0) == 0.0):
         dtype = sc.dtype.int32
@@ -485,8 +275,8 @@ def _convert_MatrixWorkspace_info(ws,
     }
 
     if load_run_logs:
-        for run_log_name, run_log_variable in make_variables_from_run_logs(ws):
-            info["unaligned_coords"][run_log_name] = run_log_variable
+        for log_name, log_variable in _make_variables_from_run_logs(ws):
+            info["unaligned_coords"][log_name] = log_variable
 
     if advanced_geometry:
         info["coords"]["detector-info"] = make_detector_info(ws)
@@ -542,6 +332,201 @@ def convert_monitors_ws(ws, converter, **ignored):
         del single_monitor.unaligned_coords['sample']
         monitors.append((comp_info.name(det_index), single_monitor))
     return monitors
+
+
+def load_component_info(ds, file, advanced_geometry=False):
+    """
+    Adds the component info coord into the dataset. The following are added:
+
+    - source-position
+    - sample-position
+    - detector positions
+    - detector rotations
+    - detector shapes
+
+    :param ds: Dataset on which the component info will be added as coords.
+    :param file: File from which the IDF will be loaded.
+                 This can be anything that mantid.Load can load.
+    :param bool advanced_geometry: If True, load the full detector geometry
+                                   including shapes and rotations. The
+                                   positions of grouped detectors are
+                                   spherically averaged. If False,
+                                   load only the detector position, and return
+                                   the cartesian average of the grouped
+                                   detector positions.
+    """
+    with run_mantid_alg('Load', file) as ws:
+        source_pos, sample_pos = make_component_info(ws)
+
+        ds.coords["source-position"] = source_pos
+        ds.coords["sample-position"] = sample_pos
+        pos, rot, shp = get_detector_properties(
+            ws, source_pos, sample_pos, advanced_geometry=advanced_geometry)
+        ds.coords["position"] = pos
+        if rot is not None:
+            ds.unaligned_coords["rotation"] = rot
+        if shp is not None:
+            ds.unaligned_coords["shape"] = shp
+
+
+def validate_dim_and_get_mantid_string(unit_dim):
+    known_units = {
+        'Delta-E': "DeltaE",
+        'tof': "TOF",
+        'wavelength': "Wavelength",
+        'E': "Energy",
+        'd-spacing': "dSpacing",
+        'Q': "MomentumTransfer",
+        'Q^2': "QSquared",
+    }
+
+    user_k = str(unit_dim).casefold()
+    known_units = {k.casefold(): v for k, v in known_units.items()}
+
+    if user_k not in known_units:
+        raise RuntimeError("Axis unit not currently supported."
+                           "Possible values are: {}, "
+                           "got '{}'. ".format([k for k in known_units.keys()],
+                                               unit_dim))
+    else:
+        return known_units[user_k]
+
+
+def _table_to_data_array(table, key, value, stddev):
+    stddevs = table[stddev].values
+    dim = 'parameter'
+    coord = table[key].data.copy()
+    coord.rename_dims({'row': dim})
+    return sc.DataArray(data=sc.Variable(dims=[dim],
+                                         values=table[value].values,
+                                         variances=stddevs * stddevs),
+                        coords={dim: coord})
+
+
+def _fit_workspace(ws, mantid_args):
+    """
+    Performs a fit on the workspace.
+
+    :param ws: The workspace on which the fit will be performed
+    :returns: Dataset containing all of Fit's outputs
+    """
+    with run_mantid_alg('Fit',
+                        InputWorkspace=ws,
+                        **mantid_args,
+                        CreateOutput=True) as fit_algorithm:
+        # This is assuming that all parameters are dimensionless. If this is
+        # not the case we should use a dataset with a scalar variable per
+        # parameter instead. Or better, a dict of scalar variables?
+        parameters = convert_TableWorkspace_to_dataset(
+            fit_algorithm.OutputParameters)
+        parameters = _table_to_data_array(parameters,
+                                          key='Name',
+                                          value='Value',
+                                          stddev='Error')
+        out = convert_Workspace2D_to_data_array(fit_algorithm.OutputWorkspace)
+        data = sc.Dataset()
+        data['data'] = out['empty', 0]
+        data['calculated'] = out['empty', 1]
+        data['diff'] = out['empty', 2]
+        parameters.coords['status'] = sc.Variable(fit_algorithm.OutputStatus)
+        parameters.coords['chi^2/d.o.f.'] = sc.Variable(
+            fit_algorithm.OutputChi2overDoF)
+        parameters.coords['function'] = sc.Variable(str(
+            fit_algorithm.Function))
+        parameters.coords['cost-function'] = sc.Variable(
+            fit_algorithm.CostFunction)
+        return parameters, data
+
+
+def fit(data, mantid_args):
+    if len(data.dims) != 1 or 'WorkspaceIndex' in mantid_args:
+        raise RuntimeError(
+            "Only 1D fitting is supported. Use scipp slicing and do not"
+            "provide a WorkspaceIndex.")
+    dim = data.dims[0]
+    ws = to_mantid(data, dim)
+    mantid_args['workspace_index'] = 0
+    return _fit_workspace(ws, mantid_args)
+
+
+def to_mantid(data, dim, instrument_file=None):
+    """
+    Convert data to a Mantid workspace.
+
+    The Mantid layout expect the spectra to be the Outer-most dimension,
+    i.e. y.shape[0]. If that is not the case you might have to transpose
+    your data to fit that, otherwise it will not be aligned correctly in the
+    Mantid workspace.
+
+    :param data: Data to be converted.
+    :param dim: Coord to use for Mantid's first axis (X).
+    :param instrument_file: Instrument file that will be
+                            loaded into the workspace
+    :returns: Workspace containing converted data. The concrete workspace type
+              may differ depending on the content of `data`.
+    """
+    if not is_data_array(data):
+        raise RuntimeError(
+            "Currently only data arrays can be converted to a Mantid workspace"
+        )
+    if data.data is None or contains_events(data):
+        raise RuntimeError(
+            "Currently only histogrammed data can be converted.")
+    try:
+        import mantid.simpleapi as mantid
+    except ImportError:
+        raise ImportError(
+            "Mantid Python API was not found, please install Mantid framework "
+            "as detailed in the installation instructions (https://scipp."
+            "github.io/getting-started/installation.html)")
+    x = data.coords[dim].values
+    y = data.values
+    e = data.variances
+
+    assert (len(y.shape) == 2 or len(y.shape) == 1), \
+        "Currently can only handle 2D data."
+
+    e = np.sqrt(e) if e is not None else np.sqrt(y)
+
+    # Convert a single array (e.g. single spectra) into 2d format
+    if len(y.shape) == 1:
+        y = np.array([y])
+
+    if len(e.shape) == 1:
+        e = np.array([e])
+
+    unit_x = validate_dim_and_get_mantid_string(dim)
+
+    nspec = y.shape[0]
+    if len(x.shape) == 1:
+        # SCIPP is using a  1:n spectra coord mapping, Mantid needs
+        # a 1:1 mapping so expand this out
+        x = np.broadcast_to(x, shape=(nspec, len(x)))
+
+    nbins = x.shape[1]
+    nitems = y.shape[1]
+
+    ws = mantid.WorkspaceFactory.create("Workspace2D",
+                                        NVectors=nspec,
+                                        XLength=nbins,
+                                        YLength=nitems)
+    if data.unit != sc.units.counts:
+        ws.setDistribution(True)
+
+    for i in range(nspec):
+        ws.setX(i, x[i])
+        ws.setY(i, y[i])
+        ws.setE(i, e[i])
+
+    # Set X-Axis unit
+    ws.getAxis(0).setUnit(unit_x)
+
+    if instrument_file is not None:
+        mantid.LoadInstrument(ws,
+                              FileName=instrument_file,
+                              RewriteSpectraMap=True)
+
+    return ws
 
 
 def convert_Workspace2D_to_data_array(ws,
@@ -886,198 +871,3 @@ def load(filename="",
                            realign_events=realign_events,
                            error_connection=error_connection,
                            advanced_geometry=advanced_geometry)
-
-
-def load_component_info(ds, file, advanced_geometry=False):
-    """
-    Adds the component info coord into the dataset. The following are added:
-
-    - source-position
-    - sample-position
-    - detector positions
-    - detector rotations
-    - detector shapes
-
-    :param ds: Dataset on which the component info will be added as coords.
-    :param file: File from which the IDF will be loaded.
-                 This can be anything that mantid.Load can load.
-    :param bool advanced_geometry: If True, load the full detector geometry
-                                   including shapes and rotations. The
-                                   positions of grouped detectors are
-                                   spherically averaged. If False,
-                                   load only the detector position, and return
-                                   the cartesian average of the grouped
-                                   detector positions.
-    """
-    with run_mantid_alg('Load', file) as ws:
-        source_pos, sample_pos = make_component_info(ws)
-
-        ds.coords["source-position"] = source_pos
-        ds.coords["sample-position"] = sample_pos
-        pos, rot, shp = get_detector_properties(
-            ws, source_pos, sample_pos, advanced_geometry=advanced_geometry)
-        ds.coords["position"] = pos
-        if rot is not None:
-            ds.unaligned_coords["rotation"] = rot
-        if shp is not None:
-            ds.unaligned_coords["shape"] = shp
-
-
-def validate_dim_and_get_mantid_string(unit_dim):
-    known_units = {
-        'Delta-E': "DeltaE",
-        'tof': "TOF",
-        'wavelength': "Wavelength",
-        'E': "Energy",
-        'd-spacing': "dSpacing",
-        'Q': "MomentumTransfer",
-        'Q^2': "QSquared",
-    }
-
-    user_k = str(unit_dim).casefold()
-    known_units = {k.casefold(): v for k, v in known_units.items()}
-
-    if user_k not in known_units:
-        raise RuntimeError("Axis unit not currently supported."
-                           "Possible values are: {}, "
-                           "got '{}'. ".format([k for k in known_units.keys()],
-                                               unit_dim))
-    else:
-        return known_units[user_k]
-
-
-def to_mantid(data, dim, instrument_file=None):
-    """
-    Convert data to a Mantid workspace.
-
-    The Mantid layout expect the spectra to be the Outer-most dimension,
-    i.e. y.shape[0]. If that is not the case you might have to transpose
-    your data to fit that, otherwise it will not be aligned correctly in the
-    Mantid workspace.
-
-    :param data: Data to be converted.
-    :param dim: Coord to use for Mantid's first axis (X).
-    :param instrument_file: Instrument file that will be
-                            loaded into the workspace
-    :returns: Workspace containing converted data. The concrete workspace type
-              may differ depending on the content of `data`.
-    """
-    if not is_data_array(data):
-        raise RuntimeError(
-            "Currently only data arrays can be converted to a Mantid workspace"
-        )
-    if data.data is None or contains_events(data):
-        raise RuntimeError(
-            "Currently only histogrammed data can be converted.")
-    try:
-        import mantid.simpleapi as mantid
-    except ImportError:
-        raise ImportError(
-            "Mantid Python API was not found, please install Mantid framework "
-            "as detailed in the installation instructions (https://scipp."
-            "github.io/getting-started/installation.html)")
-    x = data.coords[dim].values
-    y = data.values
-    e = data.variances
-
-    assert (len(y.shape) == 2 or len(y.shape) == 1), \
-        "Currently can only handle 2D data."
-
-    e = np.sqrt(e) if e is not None else np.sqrt(y)
-
-    # Convert a single array (e.g. single spectra) into 2d format
-    if len(y.shape) == 1:
-        y = np.array([y])
-
-    if len(e.shape) == 1:
-        e = np.array([e])
-
-    unit_x = validate_dim_and_get_mantid_string(dim)
-
-    nspec = y.shape[0]
-    if len(x.shape) == 1:
-        # SCIPP is using a  1:n spectra coord mapping, Mantid needs
-        # a 1:1 mapping so expand this out
-        x = np.broadcast_to(x, shape=(nspec, len(x)))
-
-    nbins = x.shape[1]
-    nitems = y.shape[1]
-
-    ws = mantid.WorkspaceFactory.create("Workspace2D",
-                                        NVectors=nspec,
-                                        XLength=nbins,
-                                        YLength=nitems)
-    if data.unit != sc.units.counts:
-        ws.setDistribution(True)
-
-    for i in range(nspec):
-        ws.setX(i, x[i])
-        ws.setY(i, y[i])
-        ws.setE(i, e[i])
-
-    # Set X-Axis unit
-    ws.getAxis(0).setUnit(unit_x)
-
-    if instrument_file is not None:
-        mantid.LoadInstrument(ws,
-                              FileName=instrument_file,
-                              RewriteSpectraMap=True)
-
-    return ws
-
-
-def _table_to_data_array(table, key, value, stddev):
-    stddevs = table[stddev].values
-    dim = 'parameter'
-    coord = table[key].data.copy()
-    coord.rename_dims({'row': dim})
-    return sc.DataArray(data=sc.Variable(dims=[dim],
-                                         values=table[value].values,
-                                         variances=stddevs * stddevs),
-                        coords={dim: coord})
-
-
-def _fit_workspace(ws, mantid_args):
-    """
-    Performs a fit on the workspace.
-
-    :param ws: The workspace on which the fit will be performed
-    :returns: Dataset containing all of Fit's outputs
-    """
-    with run_mantid_alg('Fit',
-                        InputWorkspace=ws,
-                        **mantid_args,
-                        CreateOutput=True) as fit_algorithm:
-        # This is assuming that all parameters are dimensionless. If this is
-        # not the case we should use a dataset with a scalar variable per
-        # parameter instead. Or better, a dict of scalar variables?
-        parameters = convert_TableWorkspace_to_dataset(
-            fit_algorithm.OutputParameters)
-        parameters = _table_to_data_array(parameters,
-                                          key='Name',
-                                          value='Value',
-                                          stddev='Error')
-        out = convert_Workspace2D_to_data_array(fit_algorithm.OutputWorkspace)
-        data = sc.Dataset()
-        data['data'] = out['empty', 0]
-        data['calculated'] = out['empty', 1]
-        data['diff'] = out['empty', 2]
-        parameters.coords['status'] = sc.Variable(fit_algorithm.OutputStatus)
-        parameters.coords['chi^2/d.o.f.'] = sc.Variable(
-            fit_algorithm.OutputChi2overDoF)
-        parameters.coords['function'] = sc.Variable(str(
-            fit_algorithm.Function))
-        parameters.coords['cost-function'] = sc.Variable(
-            fit_algorithm.CostFunction)
-        return parameters, data
-
-
-def fit(data, mantid_args):
-    if len(data.dims) != 1 or 'WorkspaceIndex' in mantid_args:
-        raise RuntimeError(
-            "Only 1D fitting is supported. Use scipp slicing and do not"
-            "provide a WorkspaceIndex.")
-    dim = data.dims[0]
-    ws = to_mantid(data, dim)
-    mantid_args['workspace_index'] = 0
-    return _fit_workspace(ws, mantid_args)

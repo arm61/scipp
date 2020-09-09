@@ -318,7 +318,7 @@ def convert_TableWorkspace_to_dataset(ws, error_connection=None, **ignored):
             dataset[data_name] = detail.move(
                 sc.Variable(['row'], values=ws.column(i)))
         elif data_name in error_connection:
-            # This data has error availble
+            # This data has error available
             error_name = error_connection[data_name]
             error_index = column_names.index(error_name)
 
@@ -470,7 +470,7 @@ def load(filename="",
             # A single workspace
             data_ws = loaded
         else:
-            # Seperate data and monitor workspaces
+            # Separate data and monitor workspaces
             data_ws = loaded.OutputWorkspace
 
         if instrument_filename is not None:

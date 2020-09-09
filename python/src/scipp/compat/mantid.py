@@ -691,13 +691,13 @@ def convert_TableWorkspace_to_dataset(ws, error_connection=None, **ignored):
 
     Parameters
     ----------
-        ws : Mantid TableWorkspace
+        :param ws: Mantid TableWorkspace
             Mantid TableWorkspace to be converted into scipp dataset
 
     Keyword arguments
     -----------------
-        error_connection : Dict
-            Dict with data column names as keys to names of their error column
+        :param error_connection: Dict with data column names as keys
+                                 to names of their error column
     """
 
     # Extract information from workspace

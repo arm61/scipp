@@ -381,7 +381,7 @@ class TestMantidConversion(unittest.TestCase):
 
         ds = sc.Dataset()
 
-        sc.compat.mantid.load_component_info(
+        sc.compat._mantid_workspace.load_component_info(
             ds, MantidDataHelper.find_file("iris26176_graphite002_sqw.nxs"))
 
         # check that no workspaces have been leaked in the ADS

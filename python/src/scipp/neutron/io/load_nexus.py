@@ -4,9 +4,35 @@ import h5py
 import numpy as np
 from os.path import join
 from timeit import default_timer as timer
+from typing import Union, List, Dict
 
 
-def load_nexus(filename, entry="/", verbose=False, convert_ids=False,
+def find_by_nx_class(
+        nx_class_names: List[str],
+        root: Union[h5py.File, h5py.Group]) -> Dict[str, h5py.Group]:
+    groups_with_requested_nx_class = {
+        class_name: []
+        for class_name in nx_class_names
+    }
+
+    def _match_nx_class(name, h5_object):
+        if isinstance(h5_object, h5py.Group):
+            try:
+                if h5_object.attrs["NX_class"].decode(
+                        "utf8") in nx_class_names:
+                    groups_with_requested_nx_class[h5_object.attrs[
+                        "NX_class"].decode("utf8")].append(h5_object)
+            except AttributeError:
+                pass
+
+    root.visititems(_match_nx_class)
+    return groups_with_requested_nx_class
+
+
+def load_nexus(filename,
+               entry="/",
+               verbose=False,
+               convert_ids=False,
                instrument_file=None):
     """
     Load a hdf/nxs file and return required information.
@@ -107,8 +133,8 @@ def load_nexus(filename, entry="/", verbose=False, convert_ids=False,
     # Populate event list chunk by chunk
     start = timer()
     for n in range(nspec):
-        var['spectrum', n].values.extend(
-            data["event_time_offset"][locs[n]:locs[n + 1]])
+        var['spectrum',
+            n].values.extend(data["event_time_offset"][locs[n]:locs[n + 1]])
         ones = np.ones_like(var['spectrum', n].values)
         weights['spectrum', n].values = ones
         weights['spectrum', n].variances = ones
@@ -172,7 +198,8 @@ def load_positions(filename, entry='/', dim='position'):
                 for i, x in enumerate(xyz):
                     entry = join(root, '{}_pixel_offset'.format(x))
                     if entry in f:
-                        offsets[x] = f[entry][()].astype(np.float64).ravel() + pos[i]
+                        offsets[x] = f[entry][()].astype(
+                            np.float64).ravel() + pos[i]
                         size = len(offsets[x])
                 for i, x in enumerate(xyz):
                     if offsets[x] is not None:

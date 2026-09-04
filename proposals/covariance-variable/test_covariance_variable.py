@@ -89,6 +89,12 @@ def test_to_variable_preserves_marginal_variances(a):
     np.testing.assert_allclose(plain.variances, np.diag(COV3))
 
 
+def test_html_repr_is_not_prefixed_with_scipp(a):
+    html = a._repr_html_()
+    assert "sc-obj-type'>CovarianceVariable " in html
+    assert 'scipp.CovarianceVariable' not in html
+
+
 def test_reserved_dimension_label_is_rejected():
     with pytest.raises(CovarianceError):
         covariance_array(dims=["x'"], values=[1.0], covariance=[[1.0]])

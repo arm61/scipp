@@ -301,6 +301,17 @@ class CovarianceVariable(sc.Variable):
         corr = np.array2string(_matrix(self.correlation, self._n), precision=3)
         return f"<CovarianceVariable> {base}\n  correlation:\n{corr}"
 
+    def _repr_html_(self) -> str:
+        # scipp's variable_repr (src/scipp/visualization/formatting_html.py)
+        # hard-codes a 'scipp.' prefix on the class name, which is wrong for a
+        # class defined outside the scipp namespace.
+        name = type(self).__name__
+        return sc.Variable._repr_html_(self).replace(
+            f"<div class='sc-obj-type'>scipp.{name} ",
+            f"<div class='sc-obj-type'>{name} ",
+            1,
+        )
+
     # -- covariance algebra --------------------------------------------------
 
     @staticmethod

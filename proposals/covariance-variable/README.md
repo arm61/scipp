@@ -5,7 +5,7 @@ subclass of `scipp.Variable` that stores and propagates a full covariance matrix
 instead of only the diagonal (`variances`).
 
 * `covariance_variable.py` — the prototype (`CovarianceVariable`)
-* `test_covariance_variable.py` — 41 tests, checked against an independent
+* `test_covariance_variable.py` — 42 tests, checked against an independent
   numerically-differentiated `J C Jᵀ` reference
 
 ```

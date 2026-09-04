@@ -5,8 +5,10 @@ subclass of `scipp.Variable` that stores and propagates a full covariance matrix
 instead of only the diagonal (`variances`).
 
 * `covariance_variable.py` — the prototype (`CovarianceVariable`)
-* `test_covariance_variable.py` — 64 tests, checked against an independent
-  numerically-differentiated `J C Jᵀ` reference
+* `covariance_data_array.py` — `CovarianceDataArray`, the matching
+  `scipp.DataArray` subclass
+* `test_covariance_variable.py`, `test_covariance_data_array.py` — 94 tests,
+  checked against an independent numerically-differentiated `J C Jᵀ` reference
 
 ```
 pip install scipp pytest
@@ -265,14 +267,32 @@ unnoticed.
    ```
 
    Nor can the covariance ride along as a coord: a coord carrying the mirror
-   dimension is rejected with `DimensionError`. There is no way to keep a
-   covariance inside a `DataArray`, as data or as metadata. The
-   `DataArray`-shaped alternative is a nested `DataGroup`, which slices as a
-   unit and preserves everything:
+   dimension is rejected with `DimensionError`. Nothing can keep a covariance
+   inside a *plain* `DataArray`, as data or as metadata.
+
+   `CovarianceDataArray` (in `covariance_data_array.py`) applies the same
+   pattern one level up: the C++ side holds values and variances, the
+   covariance lives in the Python instance, and `.data` reassembles the two on
+   access. Coords and masks are ordinary variables, so the base class handles
+   them unchanged.
 
    ```python
-   sc.DataGroup({'real': sc.DataGroup({'data': cv, 'omega': freq})})
+   da = CovarianceDataArray(data=cv, coords={'omega': freq})
+   da.data                # CovarianceVariable
+   da.sum('omega')        # off-diagonals included; coord dropped as usual
+   da['omega', 0:2]       # slices both covariance axes
    ```
+
+   Two details make it work. Aliasing is compared on the *underlying* C++
+   variables, because `.data` rebuilds a new object per access and would
+   otherwise make `da + da` look like two independent operands. And slicing
+   finds the selected positions by applying the same key to a probe array of
+   flat indices, so positional, label-based and boolean indexing stay
+   consistent with the base class.
+
+   `sc.Dataset` remains out of reach: it stores C++ `DataArray`s, so the
+   subclass is stripped one level further up. Use a `DataGroup` of
+   `CovarianceDataArray`s.
 
    **`sc.DataGroup` is the exception and the recommended container**: it is a
    pure-Python dict, so construction, `copy`, `deepcopy`, nesting, slicing and

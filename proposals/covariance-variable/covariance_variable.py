@@ -672,6 +672,11 @@ def concat(variables: Sequence[CovarianceVariable], dim: str) -> CovarianceVaria
     The inputs are assumed mutually independent, so the cross-blocks are zero.
     """
     variables = list(variables)
+    if not all(isinstance(v, CovarianceVariable) for v in variables):
+        raise CovarianceError(
+            "concat expects CovarianceVariable operands; got "
+            f"{sorted({type(v).__name__ for v in variables})}."
+        )
     base = sc.concat([_values_only(v) for v in variables], dim)
     n = int(np.prod(base.shape, dtype=int))
     out = np.zeros((n, n))
@@ -767,8 +772,12 @@ _ORIGINAL_FUNCTIONS: dict[str, Any] = {}
 
 
 def _contains_covariance(obj: Any, _depth: int = 0) -> bool:
-    """Whether a covariance variable is anywhere inside an argument."""
-    if isinstance(obj, CovarianceVariable):
+    """Whether a covariance-carrying object is anywhere inside an argument.
+
+    Duck-typed on ``_covariance`` so that ``CovarianceDataArray`` is recognised
+    without importing it (that module imports this one).
+    """
+    if isinstance(obj, sc.Variable | sc.DataArray) and hasattr(obj, '_covariance'):
         return True
     if _depth > 3:
         return False

@@ -19,6 +19,7 @@ raise instead of silently degrading, in the spirit of ADR 0015.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Iterable, Sequence
 from typing import Any
 
@@ -521,43 +522,56 @@ class CovarianceVariable(sc.Variable):
     def __deepcopy__(self, _: Any) -> CovarianceVariable:
         return self.copy(deep=True)
 
-    # -- operations that cannot preserve a covariance ------------------------
 
-    @staticmethod
-    def _unsupported(name: str) -> Any:
-        def fail(*_: Any, **__: Any) -> Any:
-            raise CovarianceError(
-                f"'{name}' does not propagate a covariance matrix. Call "
-                f"'.to_variable()' first if dropping the correlations is intended."
-            )
+# --------------------------------------------------------------------------
+# Operations that cannot preserve a covariance
+# --------------------------------------------------------------------------
 
-        return fail
+#: Inherited methods safe to leave alone: they do not produce a derived
+#: variable whose correlations could be lost.
+_SAFE_INHERITED = frozenset({'plot', 'underlying_size'})
 
 
-for _name in (
-    'bin',
-    'cumsum',
-    'flatten',
-    'fold',
-    'hist',
-    'max',
-    'median',
-    'min',
-    'nanhist',
-    'nanmax',
-    'nanmean',
-    'nanmin',
-    'nansum',
-    'rebin',
-    'std',
-    'var',
-):
-    setattr(
-        CovarianceVariable,
-        _name,
-        (lambda n: lambda self, *a, **k: CovarianceVariable._unsupported(n)())(_name),
-    )
-del _name
+def _unsupported_method(name: str) -> Any:
+    def fail(self: Any, *_: Any, **__: Any) -> Any:
+        raise CovarianceError(
+            f"'{name}' does not propagate a covariance matrix. Call "
+            f"'.to_variable()' first if dropping the correlations is intended."
+        )
+
+    fail.__name__ = name
+    fail.__qualname__ = f'CovarianceVariable.{name}'
+    return fail
+
+
+def _install_unsupported_stubs() -> None:
+    """Make every un-overridden ``Variable`` method fail loudly.
+
+    Listing the unsupported operations by hand is a denylist, and anything left
+    off it degrades *silently* to a plain ``Variable`` -- the exact failure mode
+    this design exists to prevent. ``sc.DataGroup`` makes that easy to hit:
+    its methods dispatch to the item's method (``operator.methodcaller`` in
+    ``src/scipp/core/data_group.py``), so ``dg.squeeze()`` reaches
+    ``Variable.squeeze`` and quietly drops the covariance.
+
+    So the list is derived rather than written: every public ``sc.Variable``
+    method this class does not explicitly implement gets a raising stub.
+    Properties are left alone -- they return metadata, and scipp reads some of
+    them (``bins``, ``dims``) while dispatching.
+    """
+    for name in dir(sc.Variable):
+        if name.startswith('_') or name in _SAFE_INHERITED:
+            continue
+        if name in vars(CovarianceVariable):
+            continue
+        if isinstance(inspect.getattr_static(sc.Variable, name), property):
+            continue
+        if not callable(getattr(sc.Variable, name, None)):
+            continue
+        setattr(CovarianceVariable, name, _unsupported_method(name))
+
+
+_install_unsupported_stubs()
 
 
 # --------------------------------------------------------------------------

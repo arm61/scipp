@@ -5,7 +5,7 @@ subclass of `scipp.Variable` that stores and propagates a full covariance matrix
 instead of only the diagonal (`variances`).
 
 * `covariance_variable.py` — the prototype (`CovarianceVariable`)
-* `test_covariance_variable.py` — 42 tests, checked against an independent
+* `test_covariance_variable.py` — 48 tests, checked against an independent
   numerically-differentiated `J C Jᵀ` reference
 
 ```
@@ -228,10 +228,27 @@ unnoticed.
    only the free-function form degrades. A fuller solution would add a dispatch
    layer, e.g. a `__scipp_dispatch__` protocol honoured by
    `src/scipp/core/reduction.py` and friends.
-2. **Containers strip the subclass.** `sc.DataArray(data=cv).data` is a plain
-   `Variable`, because `DataArray` copy-constructs a C++ `Variable`. There is no
-   Python-side fix; covariance-carrying data cannot round-trip through
-   `DataArray`, `Dataset` or `Coords`.
+2. **C++ containers strip the subclass.** `sc.DataArray(data=cv).data` is a
+   plain `Variable`. `DataArray` holds `std::shared_ptr<Variable> m_data`
+   (`lib/dataset/include/scipp/dataset/data_array.h:105`), and the binding's
+   setter takes `const Variable &` while its getter returns by value under
+   `return_value_policy::copy` (`lib/python/bind_data_array.h:399-402`) — so the
+   covariance is dropped on *insertion*, and every read builds a fresh plain
+   wrapper (`ds['a'].data is ds['a'].data` is `False`). There is no Python-side
+   fix; covariance data cannot round-trip through `DataArray`, `Dataset` or
+   `Coords`.
+
+   **`sc.DataGroup` is the exception and the recommended container**: it is a
+   pure-Python dict, so construction, `copy`, `deepcopy`, nesting, slicing and
+   arithmetic all preserve the subclass, and its methods dispatch to the
+   *item's* method (`operator.methodcaller` in `src/scipp/core/data_group.py`),
+   so `dg.sum('x')` uses this class's override. Only the free-function form
+   (`sc.sum(dg)`, via `data_group_nary`) degrades, per limitation (1).
+
+   That same method dispatch is why the unsupported-operation stubs must be
+   *generated* from `Variable`'s API rather than listed by hand: a hand-written
+   denylist omitted `squeeze`, `astype`, `round`, `rename_dims`, `all` and
+   `any`, and `dg.squeeze()` then silently dropped the covariance.
 
 Cost: memory and time are **O(N²)** in the number of elements. A 1000-element
 variable needs an 8 MB covariance; 10⁶ elements is infeasible. Practical use is

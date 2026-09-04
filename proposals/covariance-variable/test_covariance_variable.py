@@ -337,10 +337,56 @@ def test_correlation_matrix(a):
 # -- degradation is explicit, never silent ---------------------------------
 
 
-@pytest.mark.parametrize('name', ['flatten', 'fold', 'hist', 'cumsum', 'max'])
+@pytest.mark.parametrize(
+    'name',
+    ['flatten', 'fold', 'hist', 'cumsum', 'max', 'squeeze', 'astype', 'round'],
+)
 def test_unsupported_operations_raise(a, name):
     with pytest.raises(CovarianceError):
         getattr(a, name)()
+
+
+def test_every_inherited_variable_method_is_accounted_for():
+    """No Variable method may degrade silently.
+
+    A hand-written denylist let `squeeze`, `astype`, `round`, `rename_dims`,
+    `all` and `any` fall through to C++ and quietly drop the covariance. The
+    stubs are generated from Variable's API instead, so every public method is
+    either implemented here or replaced by a raising stub -- and that stays
+    true when scipp adds methods.
+    """
+    import inspect
+
+    missing = [
+        name
+        for name in dir(sc.Variable)
+        if not name.startswith('_')
+        and name not in ('plot', 'underlying_size')
+        and not isinstance(inspect.getattr_static(sc.Variable, name), property)
+        and callable(getattr(sc.Variable, name, None))
+        and name not in vars(CovarianceVariable)
+    ]
+    assert missing == []
+
+
+# -- DataGroup is the one container that preserves the subclass ------------
+
+
+def test_data_group_preserves_the_subclass(a):
+    dg = sc.DataGroup({'a': a})
+    assert dg['a'] is a
+    # DataGroup methods dispatch to the item's method, so overrides are used.
+    assert isinstance(dg.sum('x')['a'], CovarianceVariable)
+    assert isinstance(dg.mean('x')['a'], CovarianceVariable)
+    assert isinstance(dg['x', 0:2]['a'], CovarianceVariable)
+    assert isinstance(dg.copy()['a'], CovarianceVariable)
+    assert isinstance((dg + dg)['a'], CovarianceVariable)
+
+
+def test_free_functions_on_a_data_group_still_strip(a):
+    """data_group_nary calls the scipp *free* function on each item."""
+    dg = sc.DataGroup({'a': a})
+    assert type(sc.sum(dg)['a']) is sc.Variable
 
 
 def test_free_functions_silently_degrade_to_plain_variable(a):

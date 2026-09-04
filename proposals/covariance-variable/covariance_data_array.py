@@ -190,8 +190,14 @@ class CovarianceDataArray(sc.DataArray):
 
     @property
     def covariance(self) -> sc.Variable:
-        """The full covariance matrix of the data."""
-        return self._covariance
+        """The full covariance matrix of the data, i.e. ``self.data.covariance``.
+
+        A copy, for the same reason as
+        :attr:`CovarianceVariable.covariance`: writing through the accessor
+        would otherwise mutate internal state and leave the C++-side variances
+        stale, with no error.
+        """
+        return self._covariance.copy()
 
     @covariance.setter
     def covariance(self, cov: Any) -> None:

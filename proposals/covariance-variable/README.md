@@ -7,7 +7,7 @@ instead of only the diagonal (`variances`).
 * `covariance_variable.py` — the prototype (`CovarianceVariable`)
 * `covariance_data_array.py` — `CovarianceDataArray`, the matching
   `scipp.DataArray` subclass
-* `test_covariance_variable.py`, `test_covariance_data_array.py` — 94 tests,
+* `test_covariance_variable.py`, `test_covariance_data_array.py` — 97 tests,
   checked against an independent numerically-differentiated `J C Jᵀ` reference
 
 ```

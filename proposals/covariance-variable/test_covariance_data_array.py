@@ -65,6 +65,17 @@ def test_to_data_array_preserves_marginals_and_coords(da):
     assert list(plain.coords.keys()) == ['x']
 
 
+def test_covariance_matches_data_covariance(da):
+    assert sc.identical(da.covariance, da.data.covariance)
+
+
+def test_covariance_accessor_does_not_expose_internal_state(da):
+    """Writing through the accessor would otherwise leave the C++ side stale."""
+    da.covariance.values[0, 0] = 999.0
+    np.testing.assert_allclose(cov_of(da), COV3)
+    np.testing.assert_allclose(sc.DataArray.data.fget(da).variances, np.diag(COV3))
+
+
 def test_setting_data_updates_the_covariance(da):
     da.data = covariance_array(
         dims=['x'], values=[1.0, 1.0, 1.0], covariance=np.eye(3), unit='m'

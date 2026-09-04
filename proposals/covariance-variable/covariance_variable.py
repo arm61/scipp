@@ -8,7 +8,7 @@ approach.
 
 The central invariant is::
 
-    self.variances == diag(self.covariance)
+    self.variances == diag(self._covariance)
 
 The subclass keeps the inherited C++ ``variances`` buffer populated with the
 diagonal of the covariance matrix at all times.  Any code path that falls
@@ -250,8 +250,14 @@ class CovarianceVariable(sc.Variable):
 
     @property
     def covariance(self) -> sc.Variable:
-        """The full covariance matrix, with dims ``(*dims, *mirror(dims))``."""
-        return self._covariance
+        """The full covariance matrix, with dims ``(*dims, *mirror(dims))``.
+
+        A copy. Returning the stored matrix would let a caller write through the
+        accessor -- ``var.covariance.values[0, 0] = x`` -- and leave the
+        ``variances == diag(covariance)`` invariant broken with no error. Bind
+        it to a local name if you read it repeatedly; it is ``N x N``.
+        """
+        return self._covariance.copy()
 
     @covariance.setter
     def covariance(self, cov: Any) -> None:
@@ -366,8 +372,8 @@ class CovarianceVariable(sc.Variable):
             # partials, so the operands stay perfectly correlated.
             if d_other is None:
                 raise CovarianceError("Self-referencing operand without a derivative.")
-            return self._wrap(base, self._sandwich(d_self + d_other, self.covariance))
-        cov = self._sandwich(d_self, self.covariance)
+            return self._wrap(base, self._sandwich(d_self + d_other, self._covariance))
+        cov = self._sandwich(d_self, self._covariance)
         if cov_other is not None and d_other is not None:
             cov = cov + self._sandwich(d_other, cov_other)
         return self._wrap(base, cov)
@@ -406,14 +412,14 @@ class CovarianceVariable(sc.Variable):
         rhs = _values_only(self)
         base = lhs / rhs
         # d(a/b)/db = -a/b**2 for self==b, d(a/b)/da = 1/b for the other operand.
-        cov = self._sandwich(-lhs / (rhs * rhs), self.covariance)
+        cov = self._sandwich(-lhs / (rhs * rhs), self._covariance)
         cov_other = self._covariance_of(other)
         if cov_other is not None:
             cov = cov + self._sandwich(sc.reciprocal(rhs), cov_other)
         return self._wrap(base, cov)
 
     def __neg__(self) -> CovarianceVariable:
-        return self._wrap(-_values_only(self), self.covariance)
+        return self._wrap(-_values_only(self), self._covariance)
 
     def __abs__(self) -> CovarianceVariable:
         values = _values_only(self)
@@ -457,7 +463,7 @@ class CovarianceVariable(sc.Variable):
     # -- elementwise unary functions ----------------------------------------
 
     def _chain(self, base: sc.Variable, derivative: sc.Variable) -> CovarianceVariable:
-        return self._wrap(base, self._sandwich(derivative, self.covariance))
+        return self._wrap(base, self._sandwich(derivative, self._covariance))
 
     def sqrt(self) -> CovarianceVariable:
         root = sc.sqrt(_values_only(self))
@@ -486,7 +492,7 @@ class CovarianceVariable(sc.Variable):
     def sum(self, dim: str | Iterable[str] | None = None) -> CovarianceVariable:
         """Sum over ``dim``, accounting for correlations between the summands."""
         dims = self._reduction_dims(dim)
-        cov = self.covariance
+        cov = self._covariance
         base = _values_only(self)
         for d in dims:
             cov = cov.sum(d).sum(d + MIRROR)
@@ -509,12 +515,12 @@ class CovarianceVariable(sc.Variable):
     def __getitem__(self, key: Any) -> CovarianceVariable:
         dim, index = _normalize_index(self, key)
         base = _values_only(self)[dim, index]
-        cov = self.covariance[dim, index][dim + MIRROR, index]
+        cov = self._covariance[dim, index][dim + MIRROR, index]
         return self._wrap(base, cov)
 
     def transpose(self, dims: Sequence[str] | None = None) -> CovarianceVariable:
         base = _values_only(self).transpose(None if dims is None else list(dims))
-        return self._wrap(base, self.covariance)
+        return self._wrap(base, self._covariance)
 
     def broadcast(
         self,
@@ -540,7 +546,7 @@ class CovarianceVariable(sc.Variable):
         ones = sc.ones(
             dims=list(sizes), shape=list(sizes.values()), unit='dimensionless'
         )
-        return self._wrap(base, self._sandwich(ones, self.covariance))
+        return self._wrap(base, self._sandwich(ones, self._covariance))
 
     def to(
         self, *, unit: Any = None, dtype: Any = None, copy: bool = True
@@ -548,10 +554,10 @@ class CovarianceVariable(sc.Variable):
         base = _values_only(self).to(unit=unit, dtype=dtype, copy=copy)
         # _wrap re-coerces the covariance to ``base.unit**2``, which performs
         # the quadratic scaling exactly once.
-        return self._wrap(base, self.covariance)
+        return self._wrap(base, self._covariance)
 
     def copy(self, deep: bool = True) -> CovarianceVariable:
-        return self._wrap(self.to_variable().copy(deep=deep), self.covariance)
+        return self._wrap(self.to_variable().copy(deep=deep), self._covariance)
 
     def __copy__(self) -> CovarianceVariable:
         return self.copy(deep=False)

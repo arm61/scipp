@@ -74,6 +74,13 @@ def test_setting_variances_is_rejected(a):
         a.variances = [1.0, 1.0, 1.0]
 
 
+def test_covariance_accessor_does_not_expose_internal_state(a):
+    """Writing through the accessor must not break the invariant silently."""
+    a.covariance.values[0, 0] = 999.0
+    np.testing.assert_allclose(a.variances, np.diag(COV3))
+    np.testing.assert_allclose(cov_matrix(a), COV3)
+
+
 def test_setting_covariance_updates_variances(a):
     a.covariance = np.diag([1.0, 4.0, 9.0])
     np.testing.assert_allclose(a.variances, [1.0, 4.0, 9.0])

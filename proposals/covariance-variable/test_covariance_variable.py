@@ -407,6 +407,37 @@ def test_storing_in_a_data_array_strips_the_covariance(a):
     np.testing.assert_allclose(da.data.variances, np.diag(COV3))
 
 
+def test_a_data_array_inside_a_data_group_still_strips(a):
+    """The DataGroup is innocent; wrapping in a DataArray first is not.
+
+    `sc.DataGroup({'x': sc.DataArray(data=cv)})` looks like it should work,
+    because DataGroup preserves the subclass -- but the DataArray has already
+    dropped it by then.
+    """
+    dg = sc.DataGroup({'x': sc.DataArray(data=a)})
+    assert type(dg['x'].data) is sc.Variable
+    assert isinstance(sc.DataGroup({'x': a})['x'], CovarianceVariable)
+
+
+def test_covariance_cannot_ride_along_as_a_coord(a):
+    """A coord carrying the mirror dimension is rejected by DataArray.
+
+    There is therefore no way to keep a covariance inside a DataArray at all,
+    neither as data nor as metadata.
+    """
+    with pytest.raises(sc.DimensionError):
+        sc.DataArray(data=a.to_variable(), coords={'cov': a.covariance})
+
+
+def test_nested_data_group_is_the_working_container(a):
+    """The DataArray-shaped alternative that does preserve the covariance."""
+    coord = sc.arange('x', 3.0)
+    dg = sc.DataGroup({'item': sc.DataGroup({'data': a, 'x': coord})})
+    assert isinstance(dg['item']['data'], CovarianceVariable)
+    # and it still slices as a unit
+    assert isinstance(dg['x', 0:2]['item']['data'], CovarianceVariable)
+
+
 # -- in-place operators must not leave a stale covariance ------------------
 
 

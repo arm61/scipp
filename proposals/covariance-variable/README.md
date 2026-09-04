@@ -5,7 +5,7 @@ subclass of `scipp.Variable` that stores and propagates a full covariance matrix
 instead of only the diagonal (`variances`).
 
 * `covariance_variable.py` — the prototype (`CovarianceVariable`)
-* `test_covariance_variable.py` — 61 tests, checked against an independent
+* `test_covariance_variable.py` — 64 tests, checked against an independent
   numerically-differentiated `J C Jᵀ` reference
 
 ```
@@ -255,6 +255,24 @@ unnoticed.
    wrapper (`ds['a'].data is ds['a'].data` is `False`). There is no Python-side
    fix; covariance data cannot round-trip through `DataArray`, `Dataset` or
    `Coords`.
+
+   The strip happens on **insertion**, so wrapping first and grouping later
+   does not help — this looks safe but is not:
+
+   ```python
+   sc.DataGroup({'real': sc.DataArray(data=cv, coords={'omega': freq})})
+   #                    ^^^^^^^^^^^^^^^^^^^^^ covariance already gone here
+   ```
+
+   Nor can the covariance ride along as a coord: a coord carrying the mirror
+   dimension is rejected with `DimensionError`. There is no way to keep a
+   covariance inside a `DataArray`, as data or as metadata. The
+   `DataArray`-shaped alternative is a nested `DataGroup`, which slices as a
+   unit and preserves everything:
+
+   ```python
+   sc.DataGroup({'real': sc.DataGroup({'data': cv, 'omega': freq})})
+   ```
 
    **`sc.DataGroup` is the exception and the recommended container**: it is a
    pure-Python dict, so construction, `copy`, `deepcopy`, nesting, slicing and

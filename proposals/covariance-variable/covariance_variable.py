@@ -19,6 +19,7 @@ raise instead of silently degrading, in the spirit of ADR 0015.
 
 from __future__ import annotations
 
+import functools
 import inspect
 from collections.abc import Iterable, Sequence
 from typing import Any
@@ -26,6 +27,8 @@ from typing import Any
 import numpy as np
 
 import scipp as sc
+from scipp.core.data_group import apply_to_items as _apply_to_items
+from scipp.core.data_group import data_group_nary as _data_group_nary
 
 __all__ = [
     'CovarianceError',
@@ -33,6 +36,8 @@ __all__ = [
     'concat',
     'covariance_array',
     'covariance_scalar',
+    'install_dispatch',
+    'uninstall_dispatch',
 ]
 
 #: Suffix used to build the "mirror" dimension labels of the covariance matrix.
@@ -410,6 +415,38 @@ class CovarianceVariable(sc.Variable):
     def __neg__(self) -> CovarianceVariable:
         return self._wrap(-_values_only(self), self.covariance)
 
+    def __abs__(self) -> CovarianceVariable:
+        values = _values_only(self)
+        sign = sc.array(
+            dims=list(values.dims),
+            values=np.sign(np.asarray(values.values)),
+            unit='dimensionless',
+        )
+        return self._chain(sc.abs(values), sign)
+
+    # In-place operators return a *new* object rather than mutating.
+    #
+    # pybind11's in-place slots mutate the C++ buffer and hand back the same
+    # Python object, which leaves ``_covariance`` stale: after ``a -= a`` the
+    # values are zero but the covariance still says otherwise, silently
+    # breaking the ``variances == diag(covariance)`` invariant. Rebinding is
+    # legal for ``+=`` and keeps the object consistent.
+
+    def __iadd__(self, other: Any) -> CovarianceVariable:  # noqa: PYI034
+        return self.__add__(other)
+
+    def __isub__(self, other: Any) -> CovarianceVariable:  # noqa: PYI034
+        return self.__sub__(other)
+
+    def __imul__(self, other: Any) -> CovarianceVariable:  # noqa: PYI034
+        return self.__mul__(other)
+
+    def __itruediv__(self, other: Any) -> CovarianceVariable:  # noqa: PYI034
+        return self.__truediv__(other)
+
+    def __ipow__(self, other: Any) -> CovarianceVariable:  # noqa: PYI034
+        return self.__pow__(other)
+
     def __pow__(self, exponent: Any) -> CovarianceVariable:
         if self._covariance_of(exponent) is not None:
             raise CovarianceError("Exponents with uncertainties are not supported.")
@@ -649,3 +686,155 @@ def concat(variables: Sequence[CovarianceVariable], dim: str) -> CovarianceVaria
         unit=base.unit**2,
     )
     return CovarianceVariable._wrap(base, cov)
+
+
+#: Dunder operators with no covariance meaning. Comparisons are deliberately
+#: absent: they return boolean variables, which carry no uncertainty, so
+#: degrading to a plain ``Variable`` there is correct.
+for _op in (
+    '__floordiv__',
+    '__rfloordiv__',
+    '__ifloordiv__',
+    '__mod__',
+    '__rmod__',
+    '__imod__',
+    '__and__',
+    '__or__',
+    '__xor__',
+    '__iand__',
+    '__ior__',
+    '__ixor__',
+    '__invert__',
+):
+    setattr(CovarianceVariable, _op, _unsupported_method(_op))
+del _op
+
+
+# --------------------------------------------------------------------------
+# Dispatch for scipp's free functions
+# --------------------------------------------------------------------------
+
+#: Free functions with a covariance-aware equivalent, as name -> implementation.
+_AWARE: dict[str, Any] = {
+    'abs': lambda x: abs(x),
+    'concat': lambda x, dim: concat(x, dim),
+    'cos': lambda x: x.cos(),
+    'exp': lambda x: x.exp(),
+    'log': lambda x: x.log(),
+    'mean': lambda x, dim=None: x.mean(dim),
+    'negative': lambda x: -x,
+    'reciprocal': lambda x: 1.0 / x,
+    'sin': lambda x: x.sin(),
+    'sqrt': lambda x: x.sqrt(),
+    'sum': lambda x, dim=None: x.sum(dim),
+    'to_unit': lambda x, unit, **_: x.to(unit=unit),
+    'transpose': lambda x, dims=None: x.transpose(dims),
+}
+
+#: Free functions that cannot propagate a covariance and must refuse rather
+#: than quietly return a plain ``Variable``.
+_LOSSY = (
+    'all',
+    'any',
+    'astype',
+    'bin',
+    'ceil',
+    'cumsum',
+    'flatten',
+    'floor',
+    'fold',
+    'hist',
+    'max',
+    'median',
+    'min',
+    'nanhist',
+    'nanmax',
+    'nanmean',
+    'nanmedian',
+    'nanmin',
+    'nanstd',
+    'nansum',
+    'nanvar',
+    'rebin',
+    'round',
+    'sort',
+    'squeeze',
+    'std',
+    'var',
+)
+
+_ORIGINAL_FUNCTIONS: dict[str, Any] = {}
+
+
+def _contains_covariance(obj: Any, _depth: int = 0) -> bool:
+    """Whether a covariance variable is anywhere inside an argument."""
+    if isinstance(obj, CovarianceVariable):
+        return True
+    if _depth > 3:
+        return False
+    if isinstance(obj, sc.DataGroup):
+        return any(_contains_covariance(v, _depth + 1) for v in obj.values())
+    if isinstance(obj, list | tuple):
+        return any(_contains_covariance(v, _depth + 1) for v in obj)
+    return False
+
+
+def _make_dispatcher(name: str, original: Any, target: Any) -> Any:
+    @functools.wraps(original)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if not any(_contains_covariance(x) for x in (*args, *kwargs.values())):
+            return original(*args, **kwargs)
+        # Map over DataGroups here. scipp would hand the raw C++ function to
+        # data_group_nary (call_func in core/_cpp_wrapper_util.py), so the
+        # per-item call would never reach this class.
+        if (
+            name == 'concat'
+            and args
+            and isinstance(args[0], list | tuple)
+            and any(isinstance(v, sc.DataGroup) for v in args[0])
+        ):
+            return _apply_to_items(wrapper, args[0], *args[1:], **kwargs)
+        if any(isinstance(x, sc.DataGroup) for x in (*args, *kwargs.values())):
+            return _data_group_nary(wrapper, *args, **kwargs)
+        if target is None:
+            raise CovarianceError(
+                f"'scipp.{name}' does not propagate a covariance matrix. Use the "
+                f"method form if there is one, or call '.to_variable()' first if "
+                f"dropping the correlations is intended."
+            )
+        return target(*args, **kwargs)
+
+    return wrapper
+
+
+def install_dispatch() -> None:
+    """Route scipp's free functions through :class:`CovarianceVariable`.
+
+    Scipp's free functions (``sc.sum``, ``sc.concat``, ...) call into C++ and
+    return a plain ``Variable``, dropping the covariance with no error. Inside a
+    ``DataGroup`` this is especially easy to miss, because ``call_func`` in
+    ``src/scipp/core/_cpp_wrapper_util.py`` hands the *raw C++ function* to
+    ``data_group_nary`` -- so the per-item call never reaches this class, and
+    overriding methods cannot help.
+
+    This patches the listed functions in the ``scipp`` namespace so they
+    dispatch to the covariance-aware implementation, or refuse when there is
+    none. Opt-in, and reversible with :func:`uninstall_dispatch`.
+
+    It is a stand-in for the ``__scipp_dispatch__`` protocol proposed in the
+    README: functions outside ``_AWARE`` and ``_LOSSY`` are untouched and still
+    degrade silently, which is why the real fix belongs in scipp itself.
+    """
+    for name in (*_AWARE, *_LOSSY):
+        original = getattr(sc, name, None)
+        if original is None or name in _ORIGINAL_FUNCTIONS:
+            continue
+        _ORIGINAL_FUNCTIONS[name] = original
+        setattr(sc, name, _make_dispatcher(name, original, _AWARE.get(name)))
+
+
+def uninstall_dispatch() -> None:
+    """Undo :func:`install_dispatch`."""
+    for name, original in _ORIGINAL_FUNCTIONS.items():
+        setattr(sc, name, original)
+    _ORIGINAL_FUNCTIONS.clear()

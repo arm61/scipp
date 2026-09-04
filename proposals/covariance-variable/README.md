@@ -5,7 +5,7 @@ subclass of `scipp.Variable` that stores and propagates a full covariance matrix
 instead of only the diagonal (`variances`).
 
 * `covariance_variable.py` — the prototype (`CovarianceVariable`)
-* `test_covariance_variable.py` — 48 tests, checked against an independent
+* `test_covariance_variable.py` — 61 tests, checked against an independent
   numerically-differentiated `J C Jᵀ` reference
 
 ```
@@ -223,11 +223,29 @@ unnoticed.
 
 1. **C++ free functions strip the subclass.** `sc.sum(cv, 'x')` returns a plain
    `Variable` with the sum of the *diagonal* — correct as a marginal, but an
-   underestimate when the summands are correlated. Mitigation: the subclass
-   provides its own `sum`/`mean`/etc., so `cv.sum('x')` (method form) is correct;
-   only the free-function form degrades. A fuller solution would add a dispatch
-   layer, e.g. a `__scipp_dispatch__` protocol honoured by
-   `src/scipp/core/reduction.py` and friends.
+   underestimate when the summands are correlated. The method form
+   (`cv.sum('x')`) is correct; only the free-function form degrades.
+
+   This bites hardest inside a `DataGroup`, where overriding methods cannot help:
+   `call_func` (`src/scipp/core/_cpp_wrapper_util.py:25`) hands the **raw C++
+   function** to `data_group_nary`, so the per-item call goes straight to C++ and
+   never reaches the subclass.
+
+   `install_dispatch()` is the prototype's opt-in answer: it patches the listed
+   functions in the `scipp` namespace so they route to the covariance-aware
+   implementation, or raise when there is none, for both direct and
+   `DataGroup`-wrapped arguments. `uninstall_dispatch()` reverses it.
+
+   ```python
+   sc.sum(dg, 'x')['a']            # plain Variable — correlations lost
+   install_dispatch()
+   sc.sum(dg, 'x')['a']            # CovarianceVariable, off-diagonals included
+   sc.max(dg)                      # CovarianceError instead of a silent strip
+   ```
+
+   It is a stand-in, not the fix: functions outside its two lists are untouched
+   and still degrade silently. The real fix is a `__scipp_dispatch__` protocol
+   honoured by `src/scipp/core/reduction.py` and friends — see §6.2.
 2. **C++ containers strip the subclass.** `sc.DataArray(data=cv).data` is a
    plain `Variable`. `DataArray` holds `std::shared_ptr<Variable> m_data`
    (`lib/dataset/include/scipp/dataset/data_array.h:105`), and the binding's

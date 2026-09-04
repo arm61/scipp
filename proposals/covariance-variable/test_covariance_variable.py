@@ -14,6 +14,8 @@ from covariance_variable import (
     concat,
     covariance_array,
     covariance_scalar,
+    install_dispatch,
+    uninstall_dispatch,
 )
 
 import scipp as sc
@@ -403,3 +405,109 @@ def test_storing_in_a_data_array_strips_the_covariance(a):
     da = sc.DataArray(data=a)
     assert type(da.data) is sc.Variable
     np.testing.assert_allclose(da.data.variances, np.diag(COV3))
+
+
+# -- in-place operators must not leave a stale covariance ------------------
+
+
+def test_in_place_operators_keep_the_invariant(a):
+    """pybind11's in-place slots mutate the buffer and return the same object.
+
+    That left `_covariance` stale -- `a -= a` gave zero values but non-zero
+    variances. The overrides rebind instead.
+    """
+    for op in ('__iadd__', '__isub__', '__imul__', '__itruediv__'):
+        x = covariance_array(dims=['x'], values=[1.0, 2.0], covariance=COV2, unit='m')
+        rhs = (
+            sc.scalar(2.0)
+            if op in ('__imul__', '__itruediv__')
+            else covariance_array(
+                dims=['x'], values=[1.0, 1.0], covariance=COV2, unit='m'
+            )
+        )
+        result = getattr(x, op)(rhs)
+        assert isinstance(result, CovarianceVariable), op
+        np.testing.assert_allclose(
+            result.variances, np.diag(cov_matrix(result)), err_msg=op
+        )
+
+
+def test_self_subtraction_in_place_is_exactly_zero(a):
+    a -= a
+    np.testing.assert_allclose(a.values, 0.0)
+    np.testing.assert_allclose(a.variances, 0.0, atol=1e-15)
+
+
+def test_abs_propagates_the_covariance():
+    a = covariance_array(dims=['x'], values=[-1.0, 2.0], covariance=COV2, unit='m')
+    result = abs(a)
+    np.testing.assert_allclose(result.values, [1.0, 2.0])
+    signs = np.array([-1.0, 1.0])
+    np.testing.assert_allclose(cov_matrix(result), np.outer(signs, signs) * COV2)
+
+
+@pytest.mark.parametrize('op', ['__floordiv__', '__mod__', '__invert__'])
+def test_operators_without_covariance_meaning_raise(a, op):
+    with pytest.raises(CovarianceError):
+        getattr(a, op)(a)
+
+
+def test_comparisons_still_return_plain_variables(a):
+    """Boolean results carry no uncertainty, so degrading there is correct."""
+    assert type(a == a) is sc.Variable
+    assert type(a < a) is sc.Variable
+
+
+# -- free-function dispatch -------------------------------------------------
+
+
+@pytest.fixture
+def dispatch():
+    install_dispatch()
+    yield
+    uninstall_dispatch()
+
+
+def test_free_functions_strip_without_dispatch(a):
+    dg = sc.DataGroup({'a': a})
+    assert type(sc.sum(dg, 'x')['a']) is sc.Variable
+
+
+@pytest.mark.usefixtures('dispatch')
+def test_free_functions_dispatch_inside_a_data_group():
+    a = covariance_array(dims=['x'], values=[1.0, 2.0], covariance=COV2, unit='m')
+    dg = sc.DataGroup({'a': a})
+    total = sc.sum(dg, 'x')['a']
+    assert isinstance(total, CovarianceVariable)
+    assert float(total.variance) == pytest.approx(COV2.sum())
+    assert isinstance(sc.mean(dg, 'x')['a'], CovarianceVariable)
+    assert isinstance(sc.abs(dg)['a'], CovarianceVariable)
+    assert isinstance(sc.concat([dg, dg], 'x')['a'], CovarianceVariable)
+
+
+@pytest.mark.usefixtures('dispatch')
+def test_free_functions_dispatch_directly(a):
+    assert isinstance(sc.sum(a, 'x'), CovarianceVariable)
+    assert float(sc.sum(a, 'x').variance) == pytest.approx(COV3.sum())
+
+
+@pytest.mark.usefixtures('dispatch')
+def test_lossy_free_functions_raise(a):
+    with pytest.raises(CovarianceError):
+        sc.max(a)
+    with pytest.raises(CovarianceError):
+        sc.max(sc.DataGroup({'a': a}))
+
+
+@pytest.mark.usefixtures('dispatch')
+def test_dispatch_leaves_plain_variables_alone():
+    v = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
+    assert float(sc.sum(v).value) == pytest.approx(6.0)
+    assert type(sc.sum(v)) is sc.Variable
+    assert float(sc.max(v).value) == pytest.approx(3.0)
+
+
+def test_uninstall_dispatch_restores_scipp(a):
+    install_dispatch()
+    uninstall_dispatch()
+    assert type(sc.sum(sc.DataGroup({'a': a}), 'x')['a']) is sc.Variable

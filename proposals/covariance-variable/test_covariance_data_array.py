@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for the CovarianceDataArray prototype."""
+"""Tests for the CovDataArray prototype."""
 
 import numpy as np
 import pytest
-from covariance_data_array import CovarianceDataArray
+from covariance_data_array import CovDataArray
 from covariance_variable import (
     CovarianceError,
-    CovarianceVariable,
+    CovVariable,
     covariance_array,
     install_dispatch,
     uninstall_dispatch,
@@ -21,7 +21,7 @@ COV3 = np.array([[0.04, 0.02, 0.00], [0.02, 0.09, -0.01], [0.00, -0.01, 0.16]])
 @pytest.fixture
 def da():
     cv = covariance_array(dims=['x'], values=[1.0, 2.0, 3.0], covariance=COV3, unit='m')
-    return CovarianceDataArray(data=cv, coords={'x': sc.arange('x', 3.0)})
+    return CovDataArray(data=cv, coords={'x': sc.arange('x', 3.0)})
 
 
 def cov_of(obj):
@@ -39,7 +39,7 @@ def test_is_a_scipp_data_array(da):
 
 
 def test_data_comes_back_as_a_covariance_variable(da):
-    assert isinstance(da.data, CovarianceVariable)
+    assert isinstance(da.data, CovVariable)
     np.testing.assert_allclose(cov_of(da), COV3)
 
 
@@ -54,7 +54,7 @@ def test_from_plain_data_array_assumes_no_correlation():
         data=sc.array(dims=['x'], values=[1.0, 2.0], variances=[0.1, 0.2]),
         coords={'x': sc.arange('x', 2.0)},
     )
-    result = CovarianceDataArray.from_data_array(plain)
+    result = CovDataArray.from_data_array(plain)
     np.testing.assert_allclose(cov_of(result), np.diag([0.1, 0.2]))
 
 
@@ -84,14 +84,14 @@ def test_setting_data_updates_the_covariance(da):
 
 
 def test_html_repr_is_not_prefixed_with_scipp(da):
-    assert 'scipp.CovarianceDataArray' not in da._repr_html_()
+    assert 'scipp.CovDataArray' not in da._repr_html_()
 
 
 # -- arithmetic -------------------------------------------------------------
 
 
 def test_addition_of_independent_operands(da):
-    other = CovarianceDataArray(
+    other = CovDataArray(
         data=covariance_array(
             dims=['x'], values=[1.0, 1.0, 1.0], covariance=np.eye(3) * 0.01, unit='m'
         ),
@@ -125,7 +125,7 @@ def test_negation_and_abs(da):
 
 def test_in_place_keeps_the_invariant(da):
     da += da
-    assert isinstance(da, CovarianceDataArray)
+    assert isinstance(da, CovDataArray)
     np.testing.assert_allclose(da.data.variances, np.diag(cov_of(da)))
 
 
@@ -139,7 +139,7 @@ def test_coords_are_preserved_through_operations(da):
 
 def test_sum_accounts_for_off_diagonal_terms(da):
     total = da.sum('x')
-    assert isinstance(total, CovarianceDataArray)
+    assert isinstance(total, CovDataArray)
     assert float(total.data.variance) == pytest.approx(COV3.sum())
     # Plain scipp underestimates by dropping the off-diagonals.
     assert float(da.to_data_array().sum('x').data.variance) == pytest.approx(
@@ -160,7 +160,7 @@ def test_reduction_drops_the_reduced_coord(da):
 
 def test_positional_slice_selects_both_axes(da):
     s = da['x', 0:2]
-    assert isinstance(s, CovarianceDataArray)
+    assert isinstance(s, CovDataArray)
     np.testing.assert_allclose(cov_of(s), COV3[:2, :2])
     np.testing.assert_allclose(s.coords['x'].values, [0.0, 1.0])
 
@@ -183,7 +183,7 @@ def test_transpose_reorders_both_axes():
     m = rng.normal(size=(6, 6))
     cov = (m @ m.T).reshape(2, 3, 2, 3)
     cv = covariance_array(dims=['x', 'y'], values=values, covariance=cov, unit='m')
-    da = CovarianceDataArray(data=cv)
+    da = CovDataArray(data=cv)
     t = da.transpose(['y', 'x'])
     assert t.dims == ('y', 'x')
     np.testing.assert_allclose(cov_of(t), cov.transpose(1, 0, 3, 2).reshape(6, 6))
@@ -203,7 +203,7 @@ def test_copy_is_independent(da):
 def test_data_group_preserves_it(da):
     dg = sc.DataGroup({'a': da})
     assert dg['a'] is da
-    assert isinstance(dg['a'].data, CovarianceVariable)
+    assert isinstance(dg['a'].data, CovVariable)
 
 
 def test_dataset_still_strips_it(da):
@@ -215,9 +215,9 @@ def test_dataset_still_strips_it(da):
 def test_free_functions_dispatch(da):
     dg = sc.DataGroup({'a': da})
     total = sc.sum(dg, 'x')['a']
-    assert isinstance(total, CovarianceDataArray)
+    assert isinstance(total, CovDataArray)
     assert float(total.data.variance) == pytest.approx(COV3.sum())
-    assert isinstance(sc.sum(da, 'x'), CovarianceDataArray)
+    assert isinstance(sc.sum(da, 'x'), CovDataArray)
 
 
 @pytest.fixture
@@ -248,6 +248,6 @@ def test_every_inherited_data_array_method_is_accounted_for():
         and name not in _SAFE_INHERITED
         and not isinstance(inspect.getattr_static(sc.DataArray, name), property)
         and callable(getattr(sc.DataArray, name, None))
-        and name not in vars(CovarianceDataArray)
+        and name not in vars(CovDataArray)
     ]
     assert missing == []

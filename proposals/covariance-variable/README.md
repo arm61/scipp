@@ -4,8 +4,8 @@ This directory contains a design study and a **working reference prototype** for
 subclass of `scipp.Variable` that stores and propagates a full covariance matrix
 instead of only the diagonal (`variances`).
 
-* `covariance_variable.py` — the prototype (`CovarianceVariable`)
-* `covariance_data_array.py` — `CovarianceDataArray`, the matching
+* `covariance_variable.py` — the prototype (`CovVariable`)
+* `covariance_data_array.py` — `CovDataArray`, the matching
   `scipp.DataArray` subclass
 * `test_covariance_variable.py`, `test_covariance_data_array.py` — 97 tests,
   checked against an independent numerically-differentiated `J C Jᵀ` reference
@@ -50,7 +50,7 @@ Two further findings shape the design:
 * **Python-level operator overrides do win.** Defining `__add__`/`__radd__` etc.
   on the subclass takes precedence over the pybind11 slots, *including* Python's
   reflected-operand priority for subclasses, so `plain_variable + cov_variable`
-  correctly dispatches to `CovarianceVariable.__radd__`. Overriding a
+  correctly dispatches to `CovVariable.__radd__`. Overriding a
   `def_property` such as `variances` also works through the normal MRO.
 * **`Variable::is_same` is not exposed to Python.** Scipp's own correlation
   special-cases (`correlated()` in `lib/variable/arithmetic.cpp:31`, which makes
@@ -241,7 +241,7 @@ unnoticed.
    ```python
    sc.sum(dg, 'x')['a']            # plain Variable — correlations lost
    install_dispatch()
-   sc.sum(dg, 'x')['a']            # CovarianceVariable, off-diagonals included
+   sc.sum(dg, 'x')['a']            # CovVariable, off-diagonals included
    sc.max(dg)                      # CovarianceError instead of a silent strip
    ```
 
@@ -270,15 +270,15 @@ unnoticed.
    dimension is rejected with `DimensionError`. Nothing can keep a covariance
    inside a *plain* `DataArray`, as data or as metadata.
 
-   `CovarianceDataArray` (in `covariance_data_array.py`) applies the same
+   `CovDataArray` (in `covariance_data_array.py`) applies the same
    pattern one level up: the C++ side holds values and variances, the
    covariance lives in the Python instance, and `.data` reassembles the two on
    access. Coords and masks are ordinary variables, so the base class handles
    them unchanged.
 
    ```python
-   da = CovarianceDataArray(data=cv, coords={'omega': freq})
-   da.data                # CovarianceVariable
+   da = CovDataArray(data=cv, coords={'omega': freq})
+   da.data                # CovVariable
    da.sum('omega')        # off-diagonals included; coord dropped as usual
    da['omega', 0:2]       # slices both covariance axes
    ```
@@ -292,7 +292,7 @@ unnoticed.
 
    `sc.Dataset` remains out of reach: it stores C++ `DataArray`s, so the
    subclass is stripped one level further up. Use a `DataGroup` of
-   `CovarianceDataArray`s.
+   `CovDataArray`s.
 
    **`sc.DataGroup` is the exception and the recommended container**: it is a
    pure-Python dict, so construction, `copy`, `deepcopy`, nesting, slicing and

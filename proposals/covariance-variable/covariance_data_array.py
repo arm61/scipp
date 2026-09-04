@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""A ``scipp.DataArray`` subclass that carries a :class:`CovarianceVariable`.
+"""A ``scipp.DataArray`` subclass that carries a :class:`CovVariable`.
 
 ``sc.DataArray`` stores its data as a C++ ``std::shared_ptr<Variable>``
 (``lib/dataset/include/scipp/dataset/data_array.h:105``), so a
-``CovarianceVariable`` put into one is stripped on insertion. This subclass
-works around that the same way :class:`CovarianceVariable` works around
+``CovVariable`` put into one is stripped on insertion. This subclass
+works around that the same way :class:`CovVariable` works around
 ``Variable``: the C++ side keeps values and variances, the covariance lives in
 the Python instance, and ``.data`` reassembles the two on access.
 
@@ -23,7 +23,7 @@ from typing import Any
 import numpy as np
 from covariance_variable import (
     CovarianceError,
-    CovarianceVariable,
+    CovVariable,
     _cov_dims,
     _matrix,
     _values_only,
@@ -31,21 +31,21 @@ from covariance_variable import (
 
 import scipp as sc
 
-__all__ = ['CovarianceDataArray', 'covariance_data_array']
+__all__ = ['CovDataArray', 'covariance_data_array']
 
 
 def _plain_data(obj: Any) -> Any:
     """The C++-side data of an operand, with no covariance attached."""
-    if isinstance(obj, CovarianceDataArray):
+    if isinstance(obj, CovDataArray):
         return obj.to_data_array()
-    if isinstance(obj, CovarianceVariable):
+    if isinstance(obj, CovVariable):
         return obj.to_variable()
     return obj
 
 
 def _covariance_data(obj: Any) -> Any:
     """The covariance-carrying data of an operand, for the algebra."""
-    if isinstance(obj, CovarianceDataArray):
+    if isinstance(obj, CovDataArray):
         return obj.data
     if isinstance(obj, sc.DataArray):
         return obj.data
@@ -55,8 +55,8 @@ def _covariance_data(obj: Any) -> Any:
 def _same_data(a: Any, b: Any) -> bool:
     """Whether two data arrays are backed by the same buffer.
 
-    ``.data`` rebuilds a new ``CovarianceVariable`` on every access, so the
-    aliasing check inside :class:`CovarianceVariable` cannot see that ``da + da``
+    ``.data`` rebuilds a new ``CovVariable`` on every access, so the
+    aliasing check inside :class:`CovVariable` cannot see that ``da + da``
     has the same operand twice. Compare the underlying C++ variables instead.
     """
     if a is b:
@@ -74,13 +74,13 @@ def _same_data(a: Any, b: Any) -> bool:
         return False
 
 
-class CovarianceDataArray(sc.DataArray):
+class CovDataArray(sc.DataArray):
     """A ``scipp.DataArray`` whose data carries a full covariance matrix.
 
     Parameters
     ----------
     data:
-        The data. A :class:`CovarianceVariable` supplies its own covariance; a
+        The data. A :class:`CovVariable` supplies its own covariance; a
         plain ``Variable`` is taken as uncorrelated unless ``covariance`` is
         given.
     coords, masks, name:
@@ -95,15 +95,15 @@ class CovarianceDataArray(sc.DataArray):
       >>> cv = covariance_array(
       ...     dims=['x'], values=[1.0, 2.0], covariance=[[0.04, 0.02], [0.02, 0.09]]
       ... )
-      >>> da = CovarianceDataArray(data=cv, coords={'x': sc.arange('x', 2.0)})
+      >>> da = CovDataArray(data=cv, coords={'x': sc.arange('x', 2.0)})
       >>> type(da.data).__name__
-      'CovarianceVariable'
+      'CovVariable'
       >>> round(float(da.sum('x').data.variance), 12)
       0.17
 
     Notes
     -----
-    ``.data`` rebuilds the ``CovarianceVariable`` on each access, which copies
+    ``.data`` rebuilds the ``CovVariable`` on each access, which copies
     the ``N x N`` covariance. Bind it to a local name in hot loops.
     """
 
@@ -116,11 +116,11 @@ class CovarianceDataArray(sc.DataArray):
         covariance: Any = None,
     ) -> None:
         if covariance is not None:
-            cv = CovarianceVariable.from_variable(_plain_data(data), covariance)
-        elif isinstance(data, CovarianceVariable):
+            cv = CovVariable.from_variable(_plain_data(data), covariance)
+        elif isinstance(data, CovVariable):
             cv = data
         else:
-            cv = CovarianceVariable.from_variable(data)
+            cv = CovVariable.from_variable(data)
         super().__init__(
             data=cv.to_variable(),
             coords=dict(coords or {}),
@@ -132,7 +132,7 @@ class CovarianceDataArray(sc.DataArray):
     # -- construction --------------------------------------------------------
 
     @classmethod
-    def _from_base(cls, base: sc.DataArray, cov: sc.Variable) -> CovarianceDataArray:
+    def _from_base(cls, base: sc.DataArray, cov: sc.Variable) -> CovDataArray:
         """Attach ``cov`` to ``base``, the plain result of an operation."""
         return cls(
             data=_values_only(base.data),
@@ -143,9 +143,7 @@ class CovarianceDataArray(sc.DataArray):
         )
 
     @classmethod
-    def from_data_array(
-        cls, da: sc.DataArray, covariance: Any = None
-    ) -> CovarianceDataArray:
+    def from_data_array(cls, da: sc.DataArray, covariance: Any = None) -> CovDataArray:
         """Build from a plain ``DataArray``, assuming no correlation by default."""
         return cls(
             data=da.data,
@@ -171,9 +169,9 @@ class CovarianceDataArray(sc.DataArray):
     # -- properties ----------------------------------------------------------
 
     @property
-    def data(self) -> CovarianceVariable:
-        """The data, as a :class:`CovarianceVariable`."""
-        return CovarianceVariable._wrap(
+    def data(self) -> CovVariable:
+        """The data, as a :class:`CovVariable`."""
+        return CovVariable._wrap(
             sc.DataArray.data.fget(self),  # type: ignore[union-attr]
             self._covariance,
         )
@@ -182,8 +180,8 @@ class CovarianceDataArray(sc.DataArray):
     def data(self, value: sc.Variable) -> None:
         cv = (
             value
-            if isinstance(value, CovarianceVariable)
-            else CovarianceVariable.from_variable(value)
+            if isinstance(value, CovVariable)
+            else CovVariable.from_variable(value)
         )
         sc.DataArray.data.fset(self, cv.to_variable())  # type: ignore[union-attr]
         self._covariance = cv.covariance
@@ -193,7 +191,7 @@ class CovarianceDataArray(sc.DataArray):
         """The full covariance matrix of the data, i.e. ``self.data.covariance``.
 
         A copy, for the same reason as
-        :attr:`CovarianceVariable.covariance`: writing through the accessor
+        :attr:`CovVariable.covariance`: writing through the accessor
         would otherwise mutate internal state and leave the C++-side variances
         stale, with no error.
         """
@@ -201,7 +199,7 @@ class CovarianceDataArray(sc.DataArray):
 
     @covariance.setter
     def covariance(self, cov: Any) -> None:
-        self.data = CovarianceVariable.from_variable(
+        self.data = CovVariable.from_variable(
             sc.DataArray.data.fget(self),  # type: ignore[union-attr]
             cov,
         )
@@ -212,7 +210,7 @@ class CovarianceDataArray(sc.DataArray):
         return self.data.correlation
 
     def __repr__(self) -> str:
-        return f"<CovarianceDataArray>\n{sc.DataArray.__repr__(self)}"
+        return f"<CovDataArray>\n{sc.DataArray.__repr__(self)}"
 
     def _repr_html_(self) -> str:
         name = type(self).__name__
@@ -224,7 +222,7 @@ class CovarianceDataArray(sc.DataArray):
 
     # -- arithmetic ----------------------------------------------------------
 
-    def _binary(self, other: Any, name: str) -> CovarianceDataArray:
+    def _binary(self, other: Any, name: str) -> CovDataArray:
         # The base class handles coord alignment and mask merging.
         base = getattr(sc.DataArray, name)(self.to_data_array(), _plain_data(other))
         left = self.data
@@ -235,59 +233,59 @@ class CovarianceDataArray(sc.DataArray):
         data = getattr(left, name)(right)
         return type(self)._from_base(base, data.covariance)
 
-    def __add__(self, other: Any) -> CovarianceDataArray:
+    def __add__(self, other: Any) -> CovDataArray:
         return self._binary(other, '__add__')
 
-    def __radd__(self, other: Any) -> CovarianceDataArray:
+    def __radd__(self, other: Any) -> CovDataArray:
         return self._binary(other, '__add__')
 
-    def __sub__(self, other: Any) -> CovarianceDataArray:
+    def __sub__(self, other: Any) -> CovDataArray:
         return self._binary(other, '__sub__')
 
-    def __rsub__(self, other: Any) -> CovarianceDataArray:
+    def __rsub__(self, other: Any) -> CovDataArray:
         return (-self).__add__(other)
 
-    def __mul__(self, other: Any) -> CovarianceDataArray:
+    def __mul__(self, other: Any) -> CovDataArray:
         return self._binary(other, '__mul__')
 
-    def __rmul__(self, other: Any) -> CovarianceDataArray:
+    def __rmul__(self, other: Any) -> CovDataArray:
         return self._binary(other, '__mul__')
 
-    def __truediv__(self, other: Any) -> CovarianceDataArray:
+    def __truediv__(self, other: Any) -> CovDataArray:
         return self._binary(other, '__truediv__')
 
-    def __neg__(self) -> CovarianceDataArray:
+    def __neg__(self) -> CovDataArray:
         return type(self)._from_base(-self.to_data_array(), self.covariance)
 
-    def __abs__(self) -> CovarianceDataArray:
+    def __abs__(self) -> CovDataArray:
         data = abs(self.data)
         return type(self)._from_base(abs(self.to_data_array()), data.covariance)
 
-    def __pow__(self, other: Any) -> CovarianceDataArray:
+    def __pow__(self, other: Any) -> CovDataArray:
         data = self.data**other
         return type(self)._from_base(self.to_data_array() ** other, data.covariance)
 
-    def __iadd__(self, other: Any) -> CovarianceDataArray:  # noqa: PYI034
+    def __iadd__(self, other: Any) -> CovDataArray:  # noqa: PYI034
         return self.__add__(other)
 
-    def __isub__(self, other: Any) -> CovarianceDataArray:  # noqa: PYI034
+    def __isub__(self, other: Any) -> CovDataArray:  # noqa: PYI034
         return self.__sub__(other)
 
-    def __imul__(self, other: Any) -> CovarianceDataArray:  # noqa: PYI034
+    def __imul__(self, other: Any) -> CovDataArray:  # noqa: PYI034
         return self.__mul__(other)
 
-    def __itruediv__(self, other: Any) -> CovarianceDataArray:  # noqa: PYI034
+    def __itruediv__(self, other: Any) -> CovDataArray:  # noqa: PYI034
         return self.__truediv__(other)
 
     # -- reductions ----------------------------------------------------------
 
-    def sum(self, dim: Any = None) -> CovarianceDataArray:
+    def sum(self, dim: Any = None) -> CovDataArray:
         return self._reduce('sum', dim)
 
-    def mean(self, dim: Any = None) -> CovarianceDataArray:
+    def mean(self, dim: Any = None) -> CovDataArray:
         return self._reduce('mean', dim)
 
-    def _reduce(self, name: str, dim: Any) -> CovarianceDataArray:
+    def _reduce(self, name: str, dim: Any) -> CovDataArray:
         plain = self.to_data_array()
         base = getattr(plain, name)() if dim is None else getattr(plain, name)(dim)
         data = getattr(self.data, name)(dim)
@@ -295,7 +293,7 @@ class CovarianceDataArray(sc.DataArray):
 
     # -- shape and indexing --------------------------------------------------
 
-    def __getitem__(self, key: Any) -> CovarianceDataArray:
+    def __getitem__(self, key: Any) -> CovDataArray:
         """Slice, selecting the same elements on both covariance axes.
 
         The selected positions are found by slicing a probe array of flat
@@ -321,23 +319,23 @@ class CovarianceDataArray(sc.DataArray):
         )
         return type(self)._from_base(base, cov)
 
-    def transpose(self, dims: Sequence[str] | None = None) -> CovarianceDataArray:
+    def transpose(self, dims: Sequence[str] | None = None) -> CovDataArray:
         base = self.to_data_array().transpose(None if dims is None else list(dims))
         return type(self)._from_base(base, self.data.transpose(dims).covariance)
 
-    def to(self, **kwargs: Any) -> CovarianceDataArray:
+    def to(self, **kwargs: Any) -> CovDataArray:
         base = self.to_data_array().to(**kwargs)
         return type(self)._from_base(base, self.data.to(**kwargs).covariance)
 
-    def copy(self, deep: bool = True) -> CovarianceDataArray:
+    def copy(self, deep: bool = True) -> CovDataArray:
         return type(self)._from_base(
             self.to_data_array().copy(deep=deep), self._covariance.copy(deep=deep)
         )
 
-    def __copy__(self) -> CovarianceDataArray:
+    def __copy__(self) -> CovDataArray:
         return self.copy(deep=False)
 
-    def __deepcopy__(self, _: Any) -> CovarianceDataArray:
+    def __deepcopy__(self, _: Any) -> CovDataArray:
         return self.copy(deep=True)
 
 
@@ -369,7 +367,7 @@ def _unsupported_method(name: str) -> Any:
         )
 
     fail.__name__ = name
-    fail.__qualname__ = f'CovarianceDataArray.{name}'
+    fail.__qualname__ = f'CovDataArray.{name}'
     return fail
 
 
@@ -382,23 +380,23 @@ def _install_unsupported_stubs() -> None:
     for name in dir(sc.DataArray):
         if name.startswith('_') or name in _SAFE_INHERITED:
             continue
-        if name in vars(CovarianceDataArray):
+        if name in vars(CovDataArray):
             continue
         if isinstance(inspect.getattr_static(sc.DataArray, name), property):
             continue
         if not callable(getattr(sc.DataArray, name, None)):
             continue
-        setattr(CovarianceDataArray, name, _unsupported_method(name))
+        setattr(CovDataArray, name, _unsupported_method(name))
 
 
 _install_unsupported_stubs()
 
 for _op in ('__floordiv__', '__mod__', '__and__', '__or__', '__xor__'):
-    setattr(CovarianceDataArray, _op, _unsupported_method(_op))
+    setattr(CovDataArray, _op, _unsupported_method(_op))
 del _op
 
 
-@functools.wraps(CovarianceDataArray.__init__)
-def covariance_data_array(*args: Any, **kwargs: Any) -> CovarianceDataArray:
-    """Create a :class:`CovarianceDataArray`."""
-    return CovarianceDataArray(*args, **kwargs)
+@functools.wraps(CovDataArray.__init__)
+def covariance_data_array(*args: Any, **kwargs: Any) -> CovDataArray:
+    """Create a :class:`CovDataArray`."""
+    return CovDataArray(*args, **kwargs)

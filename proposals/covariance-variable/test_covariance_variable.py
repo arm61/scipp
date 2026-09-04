@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for the CovarianceVariable prototype.
+"""Tests for the CovVariable prototype.
 
 Results are checked against an independent reference implementation of linear
 error propagation, ``J C J^T`` with a numerically evaluated Jacobian.
@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from covariance_variable import (
     CovarianceError,
-    CovarianceVariable,
+    CovVariable,
     concat,
     covariance_array,
     covariance_scalar,
@@ -88,7 +88,7 @@ def test_setting_covariance_updates_variances(a):
 
 def test_from_variable_assumes_no_correlation():
     v = sc.array(dims=['x'], values=[1.0, 2.0], variances=[0.1, 0.2], unit='s')
-    c = CovarianceVariable.from_variable(v)
+    c = CovVariable.from_variable(v)
     np.testing.assert_allclose(cov_matrix(c), np.diag([0.1, 0.2]))
 
 
@@ -100,8 +100,8 @@ def test_to_variable_preserves_marginal_variances(a):
 
 def test_html_repr_is_not_prefixed_with_scipp(a):
     html = a._repr_html_()
-    assert "sc-obj-type'>CovarianceVariable " in html
-    assert 'scipp.CovarianceVariable' not in html
+    assert "sc-obj-type'>CovVariable " in html
+    assert 'scipp.CovVariable' not in html
 
 
 def test_reserved_dimension_label_is_rejected():
@@ -184,10 +184,10 @@ def test_scalar_operand():
 def test_reflected_operators_take_priority():
     a = covariance_array(dims=['x'], values=[1.0, 2.0], covariance=COV2, unit='m')
     plain = sc.array(dims=['x'], values=[1.0, 1.0], unit='m')
-    assert isinstance(plain + a, CovarianceVariable)
-    assert isinstance(plain * a, CovarianceVariable)
+    assert isinstance(plain + a, CovVariable)
+    assert isinstance(plain * a, CovVariable)
     result = plain - a
-    assert isinstance(result, CovarianceVariable)
+    assert isinstance(result, CovVariable)
     np.testing.assert_allclose(result.values, [0.0, -1.0])
     np.testing.assert_allclose(cov_matrix(result), COV2)
 
@@ -253,10 +253,8 @@ def test_broadcast_of_variances_is_forbidden_in_plain_scipp():
     with pytest.raises(sc.VariancesError):
         data / norm
     # The same expression is well defined once correlations are representable.
-    result = CovarianceVariable.from_variable(data) / CovarianceVariable.from_variable(
-        norm
-    )
-    assert isinstance(result, CovarianceVariable)
+    result = CovVariable.from_variable(data) / CovVariable.from_variable(norm)
+    assert isinstance(result, CovVariable)
     assert cov_matrix(result)[0, 1] > 0.0
 
 
@@ -333,7 +331,7 @@ def test_concat_is_block_diagonal():
 
 def test_copy_is_independent(a):
     c = a.copy()
-    assert isinstance(c, CovarianceVariable)
+    assert isinstance(c, CovVariable)
     c.covariance = np.zeros((3, 3))
     np.testing.assert_allclose(cov_matrix(a), COV3)
 
@@ -373,7 +371,7 @@ def test_every_inherited_variable_method_is_accounted_for():
         and name not in ('plot', 'underlying_size')
         and not isinstance(inspect.getattr_static(sc.Variable, name), property)
         and callable(getattr(sc.Variable, name, None))
-        and name not in vars(CovarianceVariable)
+        and name not in vars(CovVariable)
     ]
     assert missing == []
 
@@ -385,11 +383,11 @@ def test_data_group_preserves_the_subclass(a):
     dg = sc.DataGroup({'a': a})
     assert dg['a'] is a
     # DataGroup methods dispatch to the item's method, so overrides are used.
-    assert isinstance(dg.sum('x')['a'], CovarianceVariable)
-    assert isinstance(dg.mean('x')['a'], CovarianceVariable)
-    assert isinstance(dg['x', 0:2]['a'], CovarianceVariable)
-    assert isinstance(dg.copy()['a'], CovarianceVariable)
-    assert isinstance((dg + dg)['a'], CovarianceVariable)
+    assert isinstance(dg.sum('x')['a'], CovVariable)
+    assert isinstance(dg.mean('x')['a'], CovVariable)
+    assert isinstance(dg['x', 0:2]['a'], CovVariable)
+    assert isinstance(dg.copy()['a'], CovVariable)
+    assert isinstance((dg + dg)['a'], CovVariable)
 
 
 def test_free_functions_on_a_data_group_still_strip(a):
@@ -423,7 +421,7 @@ def test_a_data_array_inside_a_data_group_still_strips(a):
     """
     dg = sc.DataGroup({'x': sc.DataArray(data=a)})
     assert type(dg['x'].data) is sc.Variable
-    assert isinstance(sc.DataGroup({'x': a})['x'], CovarianceVariable)
+    assert isinstance(sc.DataGroup({'x': a})['x'], CovVariable)
 
 
 def test_covariance_cannot_ride_along_as_a_coord(a):
@@ -440,9 +438,9 @@ def test_nested_data_group_is_the_working_container(a):
     """The DataArray-shaped alternative that does preserve the covariance."""
     coord = sc.arange('x', 3.0)
     dg = sc.DataGroup({'item': sc.DataGroup({'data': a, 'x': coord})})
-    assert isinstance(dg['item']['data'], CovarianceVariable)
+    assert isinstance(dg['item']['data'], CovVariable)
     # and it still slices as a unit
-    assert isinstance(dg['x', 0:2]['item']['data'], CovarianceVariable)
+    assert isinstance(dg['x', 0:2]['item']['data'], CovVariable)
 
 
 # -- in-place operators must not leave a stale covariance ------------------
@@ -464,7 +462,7 @@ def test_in_place_operators_keep_the_invariant(a):
             )
         )
         result = getattr(x, op)(rhs)
-        assert isinstance(result, CovarianceVariable), op
+        assert isinstance(result, CovVariable), op
         np.testing.assert_allclose(
             result.variances, np.diag(cov_matrix(result)), err_msg=op
         )
@@ -516,16 +514,16 @@ def test_free_functions_dispatch_inside_a_data_group():
     a = covariance_array(dims=['x'], values=[1.0, 2.0], covariance=COV2, unit='m')
     dg = sc.DataGroup({'a': a})
     total = sc.sum(dg, 'x')['a']
-    assert isinstance(total, CovarianceVariable)
+    assert isinstance(total, CovVariable)
     assert float(total.variance) == pytest.approx(COV2.sum())
-    assert isinstance(sc.mean(dg, 'x')['a'], CovarianceVariable)
-    assert isinstance(sc.abs(dg)['a'], CovarianceVariable)
-    assert isinstance(sc.concat([dg, dg], 'x')['a'], CovarianceVariable)
+    assert isinstance(sc.mean(dg, 'x')['a'], CovVariable)
+    assert isinstance(sc.abs(dg)['a'], CovVariable)
+    assert isinstance(sc.concat([dg, dg], 'x')['a'], CovVariable)
 
 
 @pytest.mark.usefixtures('dispatch')
 def test_free_functions_dispatch_directly(a):
-    assert isinstance(sc.sum(a, 'x'), CovarianceVariable)
+    assert isinstance(sc.sum(a, 'x'), CovVariable)
     assert float(sc.sum(a, 'x').variance) == pytest.approx(COV3.sum())
 
 

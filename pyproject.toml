@@ -151,6 +151,9 @@ pydocstyle.convention = "numpy"
     "S101",  # asserts are fine in tests
     "B018",  # 'useless expressions' are ok because some tests just check for exceptions
 ]
+"proposals/*" = [
+    "S101",  # asserts are fine in the prototype's tests
+]
 "tools/*" = [
     "S101",  # asserts are fine, we do not run tools with optimizations
     "T201",  # printing is ok for internal tools

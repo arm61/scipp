@@ -37,7 +37,9 @@ __all__ = [
     'covariance_array',
     'covariance_scalar',
     'install_dispatch',
+    'install_operand_deferral',
     'uninstall_dispatch',
+    'uninstall_operand_deferral',
 ]
 
 #: Suffix used to build the "mirror" dimension labels of the covariance matrix.
@@ -844,14 +846,27 @@ def install_dispatch() -> None:
             continue
         _ORIGINAL_FUNCTIONS[name] = original
         setattr(sc, name, _make_dispatcher(name, original, _AWARE.get(name)))
-    _install_operand_deferral()
+    install_operand_deferral()
 
 
 def uninstall_dispatch() -> None:
-    """Undo :func:`install_dispatch`."""
+    """Undo :func:`install_dispatch`.
+
+    Leaves the operand deferral in place; that is a correctness fix installed
+    at import, not part of the opt-in free-function patching. Use
+    :func:`uninstall_operand_deferral` to undo it too.
+    """
     for name, original in _ORIGINAL_FUNCTIONS.items():
         setattr(sc, name, original)
     _ORIGINAL_FUNCTIONS.clear()
+
+
+def uninstall_operand_deferral() -> None:
+    """Restore scipp's own arithmetic operators.
+
+    Only for callers who need scipp's operator slots pristine. Afterwards
+    ``plain_variable * cov_data_array`` silently drops the covariance again.
+    """
     for (cls, name), original in _ORIGINAL_OPERATORS.items():
         setattr(cls, name, original)
     _ORIGINAL_OPERATORS.clear()
@@ -887,8 +902,20 @@ def _make_deferring_operator(original: Any) -> Any:
     return wrapper
 
 
-def _install_operand_deferral() -> None:
-    """Make plain scipp objects defer to a covariance-carrying right operand."""
+def install_operand_deferral() -> None:
+    """Make plain scipp objects defer to a covariance-carrying right operand.
+
+    Installed automatically when ``covariance_data_array`` is imported, because
+    without it ``plain_variable * cov_data_array`` silently returns a plain
+    ``DataArray``: ``CovDataArray`` subclasses ``DataArray`` but not
+    ``Variable``, so Python grants it no reflected-operand priority, and
+    ``Variable.__mul__``'s ``DataArray`` overload wins outright. A fix for
+    silently wrong numbers should not be opt-in.
+
+    Narrow by construction: the wrappers change behaviour only when the right
+    operand carries a ``_covariance``, so plain scipp arithmetic is untouched.
+    Idempotent.
+    """
     for cls in (sc.Variable, sc.DataArray, sc.Dataset):
         for name in _ARITHMETIC_DUNDERS:
             original = getattr(cls, name, None)

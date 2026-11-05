@@ -7,7 +7,7 @@ instead of only the diagonal (`variances`).
 * `covariance_variable.py` — the prototype (`CovVariable`)
 * `covariance_data_array.py` — `CovDataArray`, the matching
   `scipp.DataArray` subclass
-* `test_covariance_variable.py`, `test_covariance_data_array.py` — 104 tests,
+* `test_covariance_variable.py`, `test_covariance_data_array.py` — 105 tests,
   checked against an independent numerically-differentiated `J C Jᵀ` reference
 
 ```
@@ -298,22 +298,27 @@ unnoticed.
    subclass is stripped one level further up. Use a `DataGroup` of
    `CovDataArray`s.
 
-   One more hazard needs `install_dispatch()`. `CovDataArray` is a subclass of
+   One more hazard is fixed automatically, on import. `CovDataArray` is a subclass of
    `DataArray` but *not* of `Variable`, so in `plain_variable * cov_data_array`
    Python grants it no reflected-operand priority — and `Variable.__mul__` has a
    `DataArray` overload, so the C++ operator wins outright and drops the
    covariance:
 
    ```python
-   r * (y - 1)        # DataArray  — covariance lost
-   (y - 1) * r        # CovDataArray — same expression, operands swapped
+   r * (y - 1)  # DataArray  — covariance lost
+   (y - 1) * r  # CovDataArray — same expression, operands swapped
    ```
 
-   `install_dispatch()` also patches the arithmetic operators on `Variable`,
-   `DataArray` and `Dataset` to return `NotImplemented` when the right operand
-   carries a covariance, so Python falls through to the reflected method and
-   both orderings agree. Plain scipp arithmetic is unaffected, and
-   `uninstall_dispatch()` restores it.
+   Importing `covariance_data_array` therefore calls
+   `install_operand_deferral()`, which patches the arithmetic operators on
+   `Variable`, `DataArray` and `Dataset` to return `NotImplemented` when the
+   right operand carries a covariance, so Python falls through to the reflected
+   method and both orderings agree. This is deliberately *not* behind
+   `install_dispatch()`: a fix for silently wrong numbers should not depend on
+   an opt-in call. The wrappers change behaviour only when the right operand
+   carries a covariance, so plain scipp arithmetic is untouched;
+   `uninstall_operand_deferral()` restores the originals for callers who need
+   scipp's operator slots pristine.
 
    **`sc.DataGroup` is the exception and the recommended container**: it is a
    pure-Python dict, so construction, `copy`, `deepcopy`, nesting, slicing and

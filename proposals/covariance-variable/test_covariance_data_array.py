@@ -12,7 +12,9 @@ from covariance_variable import (
     CovVariable,
     covariance_array,
     install_dispatch,
+    install_operand_deferral,
     uninstall_dispatch,
+    uninstall_operand_deferral,
 )
 
 import scipp as sc
@@ -258,7 +260,6 @@ def test_every_inherited_data_array_method_is_accounted_for():
 # -- a plain left operand must defer to the covariance-carrying right one --
 
 
-@pytest.mark.usefixtures('_dispatch')
 def test_plain_variable_times_cov_data_array(da):
     """`Variable.__mul__` has a DataArray overload, so it would win outright.
 
@@ -280,7 +281,6 @@ def da_dimensionless():
     return CovDataArray(data=cv, coords={'x': sc.arange('x', 3.0)})
 
 
-@pytest.mark.usefixtures('_dispatch')
 def test_the_reported_expression(da_dimensionless):
     r = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
     f = r * (da_dimensionless - 1)
@@ -290,7 +290,6 @@ def test_the_reported_expression(da_dimensionless):
     np.testing.assert_allclose(cov_of(f), np.outer(scale, scale) * COV3)
 
 
-@pytest.mark.usefixtures('_dispatch')
 @pytest.mark.parametrize('op', [operator.add, operator.sub, operator.truediv])
 def test_plain_variable_on_the_left_for_every_operator(da, op):
     # add/sub need matching units; truediv does not.
@@ -298,7 +297,6 @@ def test_plain_variable_on_the_left_for_every_operator(da, op):
     assert isinstance(op(r, da), CovDataArray)
 
 
-@pytest.mark.usefixtures('_dispatch')
 def test_deferral_leaves_plain_scipp_alone():
     v = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
     plain = sc.DataArray(data=v, coords={'x': sc.arange('x', 3.0)})
@@ -308,8 +306,19 @@ def test_deferral_leaves_plain_scipp_alone():
     assert type(sc.Dataset({'a': plain}) * v) is sc.Dataset
 
 
-def test_deferral_is_reverted_on_uninstall(da):
+def test_deferral_survives_uninstall_dispatch(da):
+    """It is installed at import, so the opt-in teardown must not remove it."""
     install_dispatch()
     uninstall_dispatch()
     r = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
-    assert type(r * da) is sc.DataArray
+    assert isinstance(r * da, CovDataArray)
+
+
+def test_deferral_can_be_removed_explicitly(da):
+    r = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
+    uninstall_operand_deferral()
+    try:
+        assert type(r * da) is sc.DataArray
+    finally:
+        install_operand_deferral()
+    assert isinstance(r * da, CovDataArray)

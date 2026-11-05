@@ -27,6 +27,7 @@ from covariance_variable import (
     _cov_dims,
     _matrix,
     _values_only,
+    install_operand_deferral,
 )
 
 import scipp as sc
@@ -405,3 +406,10 @@ del _op
 def covariance_data_array(*args: Any, **kwargs: Any) -> CovDataArray:
     """Create a :class:`CovDataArray`."""
     return CovDataArray(*args, **kwargs)
+
+
+# Installed on import, not behind install_dispatch(): without it
+# `plain_variable * cov_data_array` silently returns a plain DataArray, and a
+# fix for silently wrong numbers should not depend on an opt-in call. See
+# install_operand_deferral for why Python's own dispatch does not cover this.
+install_operand_deferral()

@@ -844,6 +844,7 @@ def install_dispatch() -> None:
             continue
         _ORIGINAL_FUNCTIONS[name] = original
         setattr(sc, name, _make_dispatcher(name, original, _AWARE.get(name)))
+    _install_operand_deferral()
 
 
 def uninstall_dispatch() -> None:
@@ -851,3 +852,47 @@ def uninstall_dispatch() -> None:
     for name, original in _ORIGINAL_FUNCTIONS.items():
         setattr(sc, name, original)
     _ORIGINAL_FUNCTIONS.clear()
+    for (cls, name), original in _ORIGINAL_OPERATORS.items():
+        setattr(cls, name, original)
+    _ORIGINAL_OPERATORS.clear()
+
+
+#: Arithmetic operators whose left operand may be a plain scipp object while the
+#: right one carries a covariance.
+_ARITHMETIC_DUNDERS = (
+    '__add__',
+    '__sub__',
+    '__mul__',
+    '__truediv__',
+    '__floordiv__',
+    '__mod__',
+    '__pow__',
+)
+
+_ORIGINAL_OPERATORS: dict[tuple[type, str], Any] = {}
+
+
+def _make_deferring_operator(original: Any) -> Any:
+    @functools.wraps(original)
+    def wrapper(self: Any, other: Any) -> Any:
+        if hasattr(other, '_covariance'):
+            # Hand the operation to the covariance-carrying operand's reflected
+            # method. Python only does this automatically when the right operand
+            # is a *subclass* of the left one's type, which is not the case for
+            # `Variable * CovDataArray`: Variable.__mul__ has a DataArray
+            # overload, so it would succeed and silently drop the covariance.
+            return NotImplemented
+        return original(self, other)
+
+    return wrapper
+
+
+def _install_operand_deferral() -> None:
+    """Make plain scipp objects defer to a covariance-carrying right operand."""
+    for cls in (sc.Variable, sc.DataArray, sc.Dataset):
+        for name in _ARITHMETIC_DUNDERS:
+            original = getattr(cls, name, None)
+            if original is None or (cls, name) in _ORIGINAL_OPERATORS:
+                continue
+            _ORIGINAL_OPERATORS[(cls, name)] = original
+            setattr(cls, name, _make_deferring_operator(original))

@@ -254,6 +254,11 @@ class CovDataArray(sc.DataArray):
     def __truediv__(self, other: Any) -> CovDataArray:
         return self._binary(other, '__truediv__')
 
+    def __rtruediv__(self, other: Any) -> CovDataArray:
+        base = _plain_data(other) / self.to_data_array()
+        data = self.data.__rtruediv__(_covariance_data(other))
+        return type(self)._from_base(base, data.covariance)
+
     def __neg__(self) -> CovDataArray:
         return type(self)._from_base(-self.to_data_array(), self.covariance)
 

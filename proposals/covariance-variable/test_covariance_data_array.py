@@ -2,6 +2,8 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for the CovDataArray prototype."""
 
+import operator
+
 import numpy as np
 import pytest
 from covariance_data_array import CovDataArray
@@ -251,3 +253,63 @@ def test_every_inherited_data_array_method_is_accounted_for():
         and name not in vars(CovDataArray)
     ]
     assert missing == []
+
+
+# -- a plain left operand must defer to the covariance-carrying right one --
+
+
+@pytest.mark.usefixtures('_dispatch')
+def test_plain_variable_times_cov_data_array(da):
+    """`Variable.__mul__` has a DataArray overload, so it would win outright.
+
+    CovDataArray is not a subclass of Variable, so Python grants it no
+    reflected-operand priority; without the deferral patch the C++ overload
+    succeeds and drops the covariance.
+    """
+    r = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
+    result = r * da
+    assert isinstance(result, CovDataArray)
+    np.testing.assert_allclose(result.data.values, [1.0, 4.0, 9.0])
+    scale = np.array([1.0, 2.0, 3.0])
+    np.testing.assert_allclose(cov_of(result), np.outer(scale, scale) * COV3)
+
+
+@pytest.fixture
+def da_dimensionless():
+    cv = covariance_array(dims=['x'], values=[1.0, 2.0, 3.0], covariance=COV3)
+    return CovDataArray(data=cv, coords={'x': sc.arange('x', 3.0)})
+
+
+@pytest.mark.usefixtures('_dispatch')
+def test_the_reported_expression(da_dimensionless):
+    r = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
+    f = r * (da_dimensionless - 1)
+    assert isinstance(f, CovDataArray)
+    np.testing.assert_allclose(f.data.values, [0.0, 2.0, 6.0])
+    scale = np.array([1.0, 2.0, 3.0])
+    np.testing.assert_allclose(cov_of(f), np.outer(scale, scale) * COV3)
+
+
+@pytest.mark.usefixtures('_dispatch')
+@pytest.mark.parametrize('op', [operator.add, operator.sub, operator.truediv])
+def test_plain_variable_on_the_left_for_every_operator(da, op):
+    # add/sub need matching units; truediv does not.
+    r = sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='m')
+    assert isinstance(op(r, da), CovDataArray)
+
+
+@pytest.mark.usefixtures('_dispatch')
+def test_deferral_leaves_plain_scipp_alone():
+    v = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
+    plain = sc.DataArray(data=v, coords={'x': sc.arange('x', 3.0)})
+    assert type(v * v) is sc.Variable
+    assert type(v * plain) is sc.DataArray
+    assert type(plain * v) is sc.DataArray
+    assert type(sc.Dataset({'a': plain}) * v) is sc.Dataset
+
+
+def test_deferral_is_reverted_on_uninstall(da):
+    install_dispatch()
+    uninstall_dispatch()
+    r = sc.array(dims=['x'], values=[1.0, 2.0, 3.0])
+    assert type(r * da) is sc.DataArray

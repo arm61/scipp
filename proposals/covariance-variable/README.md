@@ -7,7 +7,7 @@ instead of only the diagonal (`variances`).
 * `covariance_variable.py` — the prototype (`CovVariable`)
 * `covariance_data_array.py` — `CovDataArray`, the matching
   `scipp.DataArray` subclass
-* `test_covariance_variable.py`, `test_covariance_data_array.py` — 97 tests,
+* `test_covariance_variable.py`, `test_covariance_data_array.py` — 104 tests,
   checked against an independent numerically-differentiated `J C Jᵀ` reference
 
 ```
@@ -35,13 +35,16 @@ against scipp 26.8.0 rather than assumed.
 The third row is the crux. Empirically, on an instance of a trivial subclass:
 
 ```python
-class Sub(sc.Variable): pass
-s = Sub(dims=['x'], values=[1., 2., 3.], variances=[.1, .2, .3])
+class Sub(sc.Variable):
+    pass
 
-type(s + s)          # Variable   (not Sub)
-type(s['x', 0])      # Variable
-type(s.copy())       # Variable
-type(sc.sum(s))      # Variable
+
+s = Sub(dims=['x'], values=[1.0, 2.0, 3.0], variances=[0.1, 0.2, 0.3])
+
+type(s + s)  # Variable   (not Sub)
+type(s['x', 0])  # Variable
+type(s.copy())  # Variable
+type(sc.sum(s))  # Variable
 type(sc.DataArray(data=s).data)  # Variable
 ```
 
@@ -65,8 +68,8 @@ disables broadcasting of variances outright, because scipp cannot represent the
 correlations a broadcast introduces:
 
 ```python
-data / norm   # VariancesError: Cannot broadcast object with variances as this
-              # would introduce unhandled correlations.
+data / norm  # VariancesError: Cannot broadcast object with variances as this
+# would introduce unhandled correlations.
 ```
 
 The ADR cites *Systematic underestimation of uncertainties by widespread
@@ -175,7 +178,7 @@ Reductions are where the payoff shows:
 
 ```python
 def sum(self, dim):
-    return wrap(base.sum(dim), cov.sum(dim).sum(dim + "'"))   # both index axes
+    return wrap(base.sum(dim), cov.sum(dim).sum(dim + "'"))  # both index axes
 ```
 
 `mean` divides the covariance by `n²`. Slicing selects on both axes; `transpose`
@@ -204,15 +207,16 @@ the correlations, never in the marginals.
 ### 3.6 Worked example
 
 ```python
-data = covariance_array(dims=['x'], values=[10., 20.],
-                        covariance=np.diag([10., 20.]), unit='counts')
+data = covariance_array(
+    dims=['x'], values=[10.0, 20.0], covariance=np.diag([10.0, 20.0]), unit='counts'
+)
 norm = covariance_scalar(2.0, variance=0.04)
 
-result = data / norm          # plain scipp: VariancesError
+result = data / norm  # plain scipp: VariancesError
 
-result.covariance             # off-diagonal is non-zero: the shared
-                              # denominator correlates the two outputs
-result.sum('x').variance      # larger than the naive uncorrelated total
+result.covariance  # off-diagonal is non-zero: the shared
+# denominator correlates the two outputs
+result.sum('x').variance  # larger than the naive uncorrelated total
 ```
 
 ---
@@ -239,10 +243,10 @@ unnoticed.
    `DataGroup`-wrapped arguments. `uninstall_dispatch()` reverses it.
 
    ```python
-   sc.sum(dg, 'x')['a']            # plain Variable — correlations lost
+   sc.sum(dg, 'x')['a']  # plain Variable — correlations lost
    install_dispatch()
-   sc.sum(dg, 'x')['a']            # CovVariable, off-diagonals included
-   sc.max(dg)                      # CovarianceError instead of a silent strip
+   sc.sum(dg, 'x')['a']  # CovVariable, off-diagonals included
+   sc.max(dg)  # CovarianceError instead of a silent strip
    ```
 
    It is a stand-in, not the fix: functions outside its two lists are untouched
@@ -278,9 +282,9 @@ unnoticed.
 
    ```python
    da = CovDataArray(data=cv, coords={'omega': freq})
-   da.data                # CovVariable
-   da.sum('omega')        # off-diagonals included; coord dropped as usual
-   da['omega', 0:2]       # slices both covariance axes
+   da.data  # CovVariable
+   da.sum('omega')  # off-diagonals included; coord dropped as usual
+   da['omega', 0:2]  # slices both covariance axes
    ```
 
    Two details make it work. Aliasing is compared on the *underlying* C++
@@ -293,6 +297,23 @@ unnoticed.
    `sc.Dataset` remains out of reach: it stores C++ `DataArray`s, so the
    subclass is stripped one level further up. Use a `DataGroup` of
    `CovDataArray`s.
+
+   One more hazard needs `install_dispatch()`. `CovDataArray` is a subclass of
+   `DataArray` but *not* of `Variable`, so in `plain_variable * cov_data_array`
+   Python grants it no reflected-operand priority — and `Variable.__mul__` has a
+   `DataArray` overload, so the C++ operator wins outright and drops the
+   covariance:
+
+   ```python
+   r * (y - 1)        # DataArray  — covariance lost
+   (y - 1) * r        # CovDataArray — same expression, operands swapped
+   ```
+
+   `install_dispatch()` also patches the arithmetic operators on `Variable`,
+   `DataArray` and `Dataset` to return `NotImplemented` when the right operand
+   carries a covariance, so Python falls through to the reflected method and
+   both orderings agree. Plain scipp arithmetic is unaffected, and
+   `uninstall_dispatch()` restores it.
 
    **`sc.DataGroup` is the exception and the recommended container**: it is a
    pure-Python dict, so construction, `copy`, `deepcopy`, nesting, slicing and
@@ -327,7 +348,7 @@ After
 ```python
 b = f(a)
 c = g(a)
-b - c        # treated as independent: wrong
+b - c  # treated as independent: wrong
 ```
 
 `b` and `c` are both derived from `a` and are strongly correlated, but neither
